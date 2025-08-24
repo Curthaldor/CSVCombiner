@@ -1,0 +1,36 @@
+# CSV Combiner - Git Ignore File
+
+# Process Management Files
+csvcombiner.pid
+
+# Temporary and Runtime Files
+*.tmp
+*.temp
+*.lock
+
+# Log Files
+Logs/
+*.log
+
+# Test Output Data
+TestOutput/
+TestInput/
+
+# Windows System Files
+Thumbs.db
+Desktop.ini
+
+# PowerShell Profile Files
+$PROFILE
+
+# Backup Files
+*.bak
+*~
+
+# CSV Data Files (exclude actual data)
+*.csv
+!example.csv
+!sample.csv
+
+# VS Code Settings (optional)
+.vscode/
