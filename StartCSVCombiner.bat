@@ -40,5 +40,10 @@ echo Starting CSV Combiner...
 echo Use Ctrl+C to stop the CSV Combiner when needed.
 echo.
 
-REM Use start command to launch PowerShell in a way that handles Ctrl+C properly
-start "CSV Combiner" /wait powershell -WindowStyle Normal -ExecutionPolicy Bypass -NoExit -Command "& '.\CSVCombiner.ps1' -ConfigPath 'CSVCombiner.ini'; Write-Host 'CSV Combiner has stopped. Press any key to close...' -ForegroundColor Yellow; Read-Host"
+REM Launch PowerShell in background without waiting for user input
+start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\CSVCombiner.ps1' -ConfigPath 'CSVCombiner.ini'"
+
+echo CSV Combiner started in background.
+echo Use StopCSVCombiner.bat to stop it safely.
+echo.
+timeout /t 3 >nul

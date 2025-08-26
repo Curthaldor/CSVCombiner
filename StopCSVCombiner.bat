@@ -64,6 +64,3 @@ echo.
 echo =========================
 echo CSV Combiner stop completed.
 echo =========================
-echo.
-echo Press any key to close this window...
-pause >nul

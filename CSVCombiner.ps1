@@ -60,19 +60,12 @@ function Read-IniFile {
     return $ini
 }
 
-# Comprehensive function to load, validate, and set configuration
+# Function to load and validate configuration
 function Initialize-Configuration {
-    param(
-        [string]$ConfigPath,
-        [bool]$IsInitialLoad = $false
-    )
+    param([string]$ConfigPath)
     
     try {
-        if ($IsInitialLoad) {
-            Write-Log "Loading initial configuration from: $ConfigPath"
-        } else {
-            Write-Log "Reloading configuration from: $ConfigPath"
-        }
+        Write-Log "Loading configuration from: $ConfigPath"
         
         # Read the configuration file
         $newConfig = Read-IniFile -FilePath $ConfigPath
@@ -121,24 +114,13 @@ function Initialize-Configuration {
         # All validation passed - update the global configuration
         $script:config = $newConfig
         
-        if ($IsInitialLoad) {
-            Write-Log "Initial configuration loaded and validated successfully"
-        } else {
-            Write-Log "Configuration reloaded and validated successfully"
-        }
-        
+        Write-Log "Configuration loaded and validated successfully"
         return $true
     }
     catch {
         Write-Log "Error reading configuration file: $($_.Exception.Message)" "ERROR"
-        
-        if ($IsInitialLoad) {
-            Write-Log "Initial configuration load failed" "ERROR"
-            return $false
-        } else {
-            Write-Log "Configuration reload failed - keeping previous settings" "WARNING"
-            return $false
-        }
+        Write-Log "Configuration load failed" "ERROR"
+        return $false
     }
 }
 
@@ -587,25 +569,39 @@ function Get-CurrentOutputPath {
 function Take-FileSnapshot {
     param([string]$FolderPath)  # Path to folder to snapshot
     
+    Write-Log "DEBUG: Take-FileSnapshot called for: $FolderPath"
+    
     $snapshot = @{
         Files = @{}
         LastCheck = Get-Date
     }
     
     try {
+        Write-Log "DEBUG: Checking if folder exists: $FolderPath"
+        if (!(Test-Path $FolderPath)) {
+            Write-Log "ERROR: Folder does not exist: $FolderPath" "ERROR"
+            return $snapshot
+        }
+        
+        Write-Log "DEBUG: Getting CSV files from: $FolderPath"
         $csvFiles = Get-ChildItem -Path $FolderPath -Filter "*.csv" -File -ErrorAction Stop
+        Write-Log "DEBUG: Found $($csvFiles.Count) CSV files"
         
         foreach ($file in $csvFiles) {
+            Write-Log "DEBUG: Processing file: $($file.Name)"
             $fileHash = ""
             if ($script:config.Advanced.UseFileHashing -eq $true) {
+                Write-Log "DEBUG: Calculating hash for: $($file.Name)"
                 try {
                     $fileHash = (Get-FileHash $file.FullName -Algorithm MD5).Hash
+                    Write-Log "DEBUG: Hash calculated successfully for: $($file.Name)"
                 } catch {
                     Write-Log "Warning: Could not calculate hash for $($file.Name): $_" "WARNING"
                     $fileHash = "HASH_ERROR"
                 }
             }
             
+            Write-Log "DEBUG: Adding file to snapshot: $($file.Name)"
             $snapshot.Files[$file.Name] = @{
                 LastWriteTime = $file.LastWriteTime
                 Size = $file.Length
@@ -614,11 +610,12 @@ function Take-FileSnapshot {
             }
         }
         
-        # Only log snapshot details during initial scan or when file count changes
+        Write-Log "DEBUG: Snapshot complete. Total files in snapshot: $($snapshot.Files.Count)"
         return $snapshot
     }
     catch {
-        Write-Log "Error taking file snapshot: $_" "ERROR"
+        Write-Log "ERROR: Exception in Take-FileSnapshot: $($_.Exception.Message)" "ERROR"
+        Write-Log "DEBUG: Returning empty snapshot due to error"
         return $snapshot
     }
 }
@@ -628,6 +625,10 @@ function Take-FileSnapshot {
 function Compare-Snapshots {
     param($OldSnapshot, $NewSnapshot)  # Snapshot objects to compare
     
+    Write-Log "DEBUG: Compare-Snapshots called"
+    Write-Log "DEBUG: Old snapshot has $($OldSnapshot.Files.Count) files"
+    Write-Log "DEBUG: New snapshot has $($NewSnapshot.Files.Count) files"
+    
     $changes = @{
         HasChanges = $false
         NewFiles = @()
@@ -636,9 +637,11 @@ function Compare-Snapshots {
         Details = @()
     }
     
+    Write-Log "DEBUG: Checking for new files..."
     # Check for new files
     foreach ($fileName in $NewSnapshot.Files.Keys) {
         if (-not $OldSnapshot.Files.ContainsKey($fileName)) {
+            Write-Log "DEBUG: Found new file: $fileName"
             $changes.NewFiles += $fileName
             $changes.HasChanges = $true
             $changes.Details += "NEW: $fileName"
@@ -669,12 +672,14 @@ function Compare-Snapshots {
             }
         } else {
             # File was deleted
+            Write-Log "DEBUG: Found deleted file: $fileName"
             $changes.DeletedFiles += $fileName
             $changes.HasChanges = $true
             $changes.Details += "DELETED: $fileName"
         }
     }
     
+    Write-Log "DEBUG: Comparison complete - Changes: $($changes.HasChanges), New: $($changes.NewFiles.Count), Modified: $($changes.ModifiedFiles.Count), Deleted: $($changes.DeletedFiles.Count)"
     return $changes
 }
 
@@ -741,9 +746,9 @@ $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
     }
 }
 
-# Load and validate initial configuration
-if (!(Initialize-Configuration -ConfigPath $ConfigPath -IsInitialLoad $true)) {
-    Write-Log "Initial configuration validation failed. Please check your configuration file: $ConfigPath" "ERROR"
+# Load and validate configuration
+if (!(Initialize-Configuration -ConfigPath $ConfigPath)) {
+    Write-Log "Configuration validation failed. Please check your configuration file: $ConfigPath" "ERROR"
     exit 1
 }
 
@@ -783,17 +788,34 @@ Write-Log "Press Ctrl+C to stop the script."
 
 # Main polling loop
 try {
-    Write-Log "CSV Combiner is running in polling mode with dynamic configuration."
-    Write-Log "Configuration will be reloaded automatically when changes are detected."
+    Write-Log "CSV Combiner is running in polling mode."
+    Write-Log "Configuration loaded at startup will be used for the entire session."
+    Write-Log "DEBUG: Entering main polling loop..."
     
+    $loopCount = 0
     while ($true) {
+        $loopCount++
+        Write-Log "DEBUG: Starting polling cycle #$loopCount"
+        
         # Wait for the polling interval
+        Write-Log "DEBUG: Sleeping for $pollingInterval seconds..."
         Start-Sleep -Seconds $pollingInterval
+        Write-Log "DEBUG: Sleep completed, taking file snapshot..."
         
         # Take new snapshot and compare
         try {
+            Write-Log "DEBUG: Calling Take-FileSnapshot for: $inputFolder"
+            $snapshotStartTime = Get-Date
             $currentSnapshot = Take-FileSnapshot $inputFolder
+            $snapshotDuration = (Get-Date) - $snapshotStartTime
+            Write-Log "DEBUG: Snapshot took $($snapshotDuration.TotalSeconds) seconds"
+            
+            Write-Log "DEBUG: Snapshot taken, comparing with previous snapshot..."
+            $compareStartTime = Get-Date
             $changes = Compare-Snapshots $lastSnapshot $currentSnapshot
+            $compareDuration = (Get-Date) - $compareStartTime
+            Write-Log "DEBUG: Comparison took $($compareDuration.TotalSeconds) seconds"
+            Write-Log "DEBUG: Comparison complete. HasChanges: $($changes.HasChanges)"
             
             if ($changes.HasChanges) {
                 Write-Log "File changes detected!"
@@ -803,11 +825,6 @@ try {
                 
                 # Wait for files to stabilize
                 $null = Wait-ForFileStability $inputFolder
-                
-                # Reload configuration in case it changed
-                if (!(Initialize-Configuration -ConfigPath $ConfigPath -IsInitialLoad $false)) {
-                    Write-Log "Configuration reload failed, using existing configuration" "WARNING"
-                }
                 
                 # Use additive processing with change information
                 Write-Log "Performing additive update based on detected changes..."
@@ -823,16 +840,22 @@ try {
                 
                 # Update snapshot after successful processing
                 $lastSnapshot = Take-FileSnapshot $inputFolder
+            } else {
+                Write-Log "DEBUG: No changes detected, continuing to next polling cycle..."
             }
         }
         catch {
-            Write-Log "Error during polling cycle: $($_.Exception.Message)" "ERROR"
+            Write-Log "ERROR: Exception during polling cycle: $($_.Exception.Message)" "ERROR"
+            Write-Log "DEBUG: Stack trace: $($_.ScriptStackTrace)" "ERROR"
             # Continue polling even if one cycle fails
         }
+        
+        Write-Log "DEBUG: Completed polling cycle #$loopCount, starting next cycle..."
     }
 }
 catch {
-    Write-Log "Unexpected error in main polling loop: $($_.Exception.Message)" "ERROR"
+    Write-Log "FATAL: Unexpected error in main polling loop: $($_.Exception.Message)" "ERROR"
+    Write-Log "DEBUG: Stack trace: $($_.ScriptStackTrace)" "ERROR"
 }
 finally {
     Write-Log "=== CSV Combiner Stopped ==="
