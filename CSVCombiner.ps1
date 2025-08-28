@@ -9,7 +9,7 @@
 # - Additive processing (preserves existing data when new files are added)
 # - Unified schema merging (handles different column structures)
 # - Configurable timestamp metadata column (extracted from filename)
-# - Duplicate removal (optional, requires timestamp column)
+# - Streaming append processing (no duplicate checking)
 # - Polling-based file monitoring (reliable, no admin privileges required)
 # - Automatic backup management with configurable retention
 # - File stability checks to prevent processing incomplete files
@@ -423,40 +423,6 @@ function Merge-CSVFiles {
         $combinedData = $existingData + $newData
         
         Write-Log "Final dataset: $($combinedData.Count) total rows ($($existingData.Count) existing + $($newData.Count) new)"
-        
-        # Remove duplicates if enabled and timestamp column is present
-        if ($script:config.General.RemoveDuplicates -eq "true" -and 
-            $script:config.General.IncludeTimestamp -eq "true") {
-            
-            $originalCount = $combinedData.Count
-            Write-Log "Removing duplicates from $originalCount rows..."
-            
-            # Create a hashtable to track unique rows (excluding metadata column)
-            $uniqueRows = @{}
-            $deduplicatedData = @()
-            
-            foreach ($row in $combinedData) {
-                # Create a hash key from all data columns (excluding metadata)
-                $dataValues = @()
-                foreach ($column in $allColumns) {
-                    if ($column -ne "Timestamp") {
-                        $value = if ($row.$column) { $row.$column.ToString().Trim() } else { "" }
-                        $dataValues += $value
-                    }
-                }
-                $hashKey = $dataValues -join "|"
-                
-                # Keep the first occurrence (preserves original data with its metadata)
-                if (-not $uniqueRows.ContainsKey($hashKey)) {
-                    $uniqueRows[$hashKey] = $true
-                    $deduplicatedData += $row
-                }
-            }
-            
-            $removedCount = $originalCount - $deduplicatedData.Count
-            Write-Log "Removed $removedCount duplicate rows, $($deduplicatedData.Count) unique rows remain"
-            $combinedData = $deduplicatedData
-        }
         
         if ($combinedData.Count -gt 0) {
             # Now get the actual output path (this will handle backup shifting)
