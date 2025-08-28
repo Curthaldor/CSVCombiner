@@ -11,9 +11,8 @@ This tool automatically monitors a folder for CSV files and combines them into a
 - **Duplicate Removal**: Optional deduplication based on data content
 - **Advanced Backup System**: Numbered backups with configurable retention
 - **File Stability Checks**: Prevents processing of incomplete files
-- **Persistent Popup Handling**: Handles file-in-use scenarios gracefully
+- **Simple Retry Logic**: Waits for next iteration when files are in use
 - **PID-Based Process Management**: Reliable start/stop operations
-- **Static Configuration**: Settings loaded once at startup for predictable behavior
 - **No Admin Required**: Runs on standard Windows 11 without special permissions
 
 ## Files Included
@@ -22,8 +21,9 @@ This tool automatically monitors a folder for CSV files and combines them into a
 - `CSVCombiner.ini` - Configuration file with advanced options
 - `StartCSVCombiner.bat` - Batch file for easy startup with PID management
 - `StopCSVCombiner.bat` - Batch file to safely stop the running process
-- `ForceStopCSVCombiner.bat` - Emergency stop batch file
 - `README.md` - This documentation
+- `TestInput/` - Sample input folder with test CSV files
+- `TestOutput/` - Sample output folder for combined results
 
 ## Quick Setup
 
@@ -65,9 +65,8 @@ Edit `CSVCombiner.ini` to customize behavior:
 - `OutputBaseName`: Base name for numbered output files (e.g., "MasterData" creates "MasterData_1.csv")
 
 ### Metadata Options
-- `IncludeSourceFile`: Add source filename column (true/false)
-- `IncludeFileCreationTime`: Add file creation timestamp column (true/false)
-- `RemoveDuplicates`: Remove duplicate rows based on data content (true/false)
+- `IncludeTimestamp`: Add source filename as timestamp column (true/false)
+- `RemoveDuplicates`: Remove duplicate rows based on data content (requires IncludeTimestamp to be enabled)
 
 ### Backup Settings
 - `MaxBackups`: Number of backup copies to keep (0 = infinite, 1 = always overwrite)
@@ -106,8 +105,8 @@ If you get execution policy errors:
 - Check that polling is detecting file changes (watch console output)
 
 ### Duplicate Data Issues
-- Enable `RemoveDuplicates=true` in configuration (requires metadata columns)
-- Verify that `IncludeSourceFile=true` and `IncludeFileCreationTime=true`
+- Enable `RemoveDuplicates=true` in configuration (requires IncludeTimestamp to be enabled)
+- Verify that `IncludeTimestamp=true` for proper duplicate detection
 - Check that data columns are consistent across CSV files
 
 ### Performance Issues
@@ -116,15 +115,10 @@ If you get execution policy errors:
 - Increase `WaitForStableFile` if files are being processed before fully written
 - Check `MaxBackups` setting if disk space is a concern
 
-### Configuration Changes
-- **Static Configuration**: Settings are loaded once at startup
-- **To Change Settings**: Stop the script, edit `CSVCombiner.ini`, then restart
-- **No Dynamic Reloading**: Ensures predictable behavior and simplified operation
-
 ### Process Management Issues
 - Use `StopCSVCombiner.bat` instead of closing PowerShell window
 - Check for `csvcombiner.pid` file if script won't start
-- Use `ForceStopCSVCombiner.bat` if normal stop doesn't work
+- Use Ctrl+C in PowerShell window if batch stop doesn't work
 
 ### OneDrive Issues
 - Make sure OneDrive is syncing properly
@@ -141,7 +135,7 @@ If you get execution policy errors:
 **Column Schema Merging:**
 - Files with different columns are automatically merged into a unified schema
 - Missing columns are filled with empty values
-- Metadata columns (SourceFile, FileCreationTime) are added first for easy identification
+- Timestamp column (containing full filename) is added first for easy identification
 
 **Example Workflow:**
 1. Day 1: `sales.csv` (Name, Amount) → Master has 100 rows
@@ -152,30 +146,28 @@ If you get execution policy errors:
 ## Process Management
 
 ### Starting the Script
-- **Manual**: Double-click `StartCSVCombiner.bat` (launches in background and auto-closes)
+- **Manual**: Double-click `StartCSVCombiner.bat`. Can also be used to restart the script.
 - **Command Line**: `powershell -ExecutionPolicy Bypass -File CSVCombiner.ps1`
 
 ### Stopping the Script
-- **Safe Stop**: Double-click `StopCSVCombiner.bat` (auto-closes after completion)
-- **Emergency Stop**: Double-click `ForceStopCSVCombiner.bat` (force kills process)
+- **Safe Stop**: Double-click `StopCSVCombiner.bat` (recommended)
 - **Manual**: Press `Ctrl+C` in the PowerShell window
 
 ### Process Detection
 - Script creates a PID file (`csvcombiner.pid`) for process tracking
 - Start/stop batch files check for existing processes automatically
 - Prevents multiple instances from running simultaneously
-- All batch files close automatically without requiring user input
 
 ## How It Works
 
-1. **Startup**: Loads configuration once and performs initial scan of existing CSV files
-2. **Monitoring**: Polling-based system checks for file changes at configured intervals
+1. **Startup**: Performs initial scan and combines any existing CSV files using additive processing
+2. **Monitoring**: Polling-based system checks for file changes every few seconds
 3. **Change Detection**: Compares file sizes, timestamps, and optionally MD5 hashes
 4. **File Stability**: Waits for files to stabilize before processing (prevents incomplete file reads)
 5. **Processing**: Uses additive approach - only processes new/modified files
 6. **Schema Unification**: Merges different column structures into unified master schema
 7. **Backup Management**: Creates numbered backups with configurable retention
-8. **Static Configuration**: Settings remain constant throughout the session for predictable behavior
+8. **Simple Retry Logic**: Waits for next iteration when files are in use
 
 ## Example OneDrive Paths
 
@@ -195,25 +187,6 @@ Then set `OutputBaseName=MasterData` to create files like:
 - `MasterData_1.csv` (current)
 - `MasterData_2.csv` (previous backup)
 - `MasterData_3.csv` (older backup)
-
-## Testing and Development
-
-The project includes test files for development and validation:
-
-### Test Setup
-- `TestInput/` folder contains sample CSV files for testing
-- `TestOutput/` folder will contain the generated master CSV files
-- Configure `InputFolder=./TestInput` and `OutputFolder=./TestOutput` for testing
-
-### Sample Test Data
-- Test files contain employee data with consistent schema
-- Demonstrates additive processing and schema merging
-- Shows metadata column functionality (SourceFile, FileCreationTime)
-
-### Debugging
-- Script includes comprehensive logging for troubleshooting
-- Console output shows detailed processing information
-- Optional log file creation for persistent logging
 
 ## Security Note
 

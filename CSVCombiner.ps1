@@ -8,12 +8,12 @@
 # FEATURES:
 # - Additive processing (preserves existing data when new files are added)
 # - Unified schema merging (handles different column structures)
-# - Configurable metadata columns (source file name, creation time)
-# - Duplicate removal (optional, requires metadata columns)
+# - Configurable timestamp metadata column (extracted from filename)
+# - Duplicate removal (optional, requires timestamp column)
 # - Polling-based file monitoring (reliable, no admin privileges required)
 # - Automatic backup management with configurable retention
 # - File stability checks to prevent processing incomplete files
-# - Persistent popup handling for file-in-use scenarios
+# - Simple retry logic for file-in-use scenarios (waits for next iteration)
 # - PID file management for reliable start/stop operations
 #
 # USAGE:
@@ -138,118 +138,39 @@ function Write-Log {
     }
 }
 
-# Function to show persistent popup for file-in-use errors
-function Show-FileInUsePopup {
-    param([string]$FilePath)
-    
-    try {
-        # Load Windows Forms assembly for MessageBox
-        Add-Type -AssemblyName System.Windows.Forms
-        
-        $fileName = Split-Path $FilePath -Leaf
-        $message = @"
-FILE IN USE - ACTION REQUIRED
-
-The file '$fileName' is currently open in another application (likely Excel or a text editor).
-
-CSV Combiner cannot update this file while it's being used.
-
-Please CLOSE the file in the other application to allow the update to proceed.
-"@
-        
-        $title = "CSV Combiner - File Access Blocked"
-        
-        # Show popup with OK button, Warning icon, and TopMost behavior
-        # 0x1000 = TopMost flag to bring window to front
-        $result = [System.Windows.Forms.MessageBox]::Show(
-            $message, 
-            $title, 
-            [System.Windows.Forms.MessageBoxButtons]::OK, 
-            [System.Windows.Forms.MessageBoxIcon]::Warning,
-            [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
-            [System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly
-        )
-        
-        Write-Log "File-in-use popup displayed for: $fileName"
-        return $true
-    }
-    catch {
-        Write-Log "Error displaying popup: $($_.Exception.Message)" "ERROR"
-        return $false
-    }
-}
-
-# Function to test if file is locked by another process
-function Test-FileLocked {
-    param([string]$FilePath)
-    
-    if (!(Test-Path $FilePath)) {
-        return $false  # File doesn't exist, so not locked
-    }
-    
-    try {
-        # Try to open file for writing - this will fail if locked
-        $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Write')
-        $fileStream.Close()
-        $fileStream.Dispose()
-        return $false  # File is not locked
-    }
-    catch {
-        return $true   # File is locked
-    }
-}
-
-# Function to write CSV with persistent popup on file lock
-function Write-CSVWithPopup {
+# Function to write CSV file with simple retry logic
+function Write-CSV {
     param(
         [array]$Data,
         [string]$OutputPath
     )
     
-    $popupShown = $false
-    
-    while ($true) {
-        try {
-            # Try to write the file
-            $Data | Export-Csv -Path $OutputPath -NoTypeInformation
+    try {
+        # Try to write the file
+        $Data | Export-Csv -Path $OutputPath -NoTypeInformation
+        Write-Log "Combined CSV saved to: $OutputPath ($($Data.Count) records)"
+        return $true
+    }
+    catch {
+        # Check if this is a file-in-use error
+        if ($_.Exception.Message -like "*being used by another process*" -or 
+            $_.Exception.Message -like "*cannot access the file*") {
             
-            if ($popupShown) {
-                Write-Log "File lock cleared - CSV update successful"
-            }
-            
-            Write-Log "Combined CSV saved to: $OutputPath ($($Data.Count) records)"
-            return $true
+            Write-Log "File is currently in use, will retry on next iteration: $OutputPath" "WARNING"
+            return $false
         }
-        catch {
-            # Check if this is a file-in-use error
-            if ($_.Exception.Message -like "*being used by another process*" -or 
-                $_.Exception.Message -like "*cannot access the file*" -or
-                (Test-FileLocked -FilePath $OutputPath)) {
-                
-                if (!$popupShown) {
-                    Write-Log "File is locked by another application: $OutputPath" "WARNING"
-                    $popupShown = $true
-                }
-                
-                # Show the persistent popup
-                Show-FileInUsePopup -FilePath $OutputPath
-                
-                # Brief pause to prevent excessive CPU usage, then try again immediately
-                Start-Sleep -Milliseconds 100
-            }
-            else {
-                # Different error - don't show popup, just log and fail
-                Write-Log "Error writing CSV file: $($_.Exception.Message)" "ERROR"
-                return $false
-            }
+        else {
+            # Different error - log and fail
+            Write-Log "Error writing CSV file: $($_.Exception.Message)" "ERROR"
+            return $false
         }
     }
 }
 
-# Function to combine CSV files
+# Function to merge CSV files
 # Main function that combines all CSV files in a folder using additive processing
 # Preserves existing data when source files are deleted, maintains unified column schema
-function Combine-CSVFiles {
+function Merge-CSVFiles {
     param(
         [string]$InputFolder,      # Path to folder containing CSV files to combine
         [bool]$IncludeHeaders = $true,  # Whether to include headers in output
@@ -283,7 +204,7 @@ function Combine-CSVFiles {
         }
         
         # If this is the initial run or no changes specified, process all files
-        if ($Changes -eq $null) {
+        if ($null -eq $Changes) {
             Write-Log "Initial run: Processing all $($csvFiles.Count) CSV files"
             $filesToProcess = $csvFiles
         }
@@ -302,8 +223,14 @@ function Combine-CSVFiles {
             if ($Changes.ModifiedFiles.Count -gt 0 -and $existingData.Count -gt 0) {
                 Write-Log "Removing data from $($Changes.ModifiedFiles.Count) modified files"
                 $existingData = $existingData | Where-Object {
-                    $sourceFile = $_."SourceFile"
-                    $sourceFile -notin $Changes.ModifiedFiles
+                    if ($script:config.General.IncludeTimestamp -eq "true" -and $_."Timestamp") {
+                        # Timestamp now contains the full filename (including .csv)
+                        $sourceFileName = $_."Timestamp"
+                        $sourceFileName -notin $Changes.ModifiedFiles
+                    } else {
+                        # If no timestamp column, keep the row (safer approach)
+                        $true
+                    }
                 }
                 Write-Log "After removal: $($existingData.Count) rows remain"
             }
@@ -321,7 +248,76 @@ function Combine-CSVFiles {
             Write-Log "Processing: $($csvFile.Name)"
             
             try {
-                $csvContent = Import-Csv -Path $csvFile.FullName
+                # Check if file is empty or has no content
+                $fileContent = Get-Content -Path $csvFile.FullName -Raw
+                if ([string]::IsNullOrWhiteSpace($fileContent)) {
+                    Write-Log "Skipping empty file: $($csvFile.Name)" "WARNING"
+                    $fileDataMap[$csvFile.Name] = @()
+                    continue
+                }
+                
+                # Check if file has at least a header line
+                $lines = Get-Content -Path $csvFile.FullName
+                if ($lines.Count -eq 0 -or [string]::IsNullOrWhiteSpace($lines[0])) {
+                    Write-Log "Skipping file with no header: $($csvFile.Name)" "WARNING"
+                    $fileDataMap[$csvFile.Name] = @()
+                    continue
+                }
+                
+                # Debug: Show first few lines of the CSV
+                Write-Log "DEBUG: File has $($lines.Count) lines, first line: '$($lines[0])'"
+                if ($lines.Count -gt 1) {
+                    Write-Log "DEBUG: Second line: '$($lines[1])'"
+                }
+                
+                # Fix duplicate column names before importing
+                $headerLine = $lines[0]
+                $columnNames = $headerLine -split ','
+                $uniqueColumnNames = @()
+                $columnCounts = @{}
+                
+                foreach ($columnName in $columnNames) {
+                    $trimmedName = $columnName.Trim()
+                    if ($columnCounts.ContainsKey($trimmedName)) {
+                        $columnCounts[$trimmedName]++
+                        $uniqueName = "${trimmedName}_$($columnCounts[$trimmedName])"
+                    } else {
+                        $columnCounts[$trimmedName] = 1
+                        $uniqueName = $trimmedName
+                    }
+                    $uniqueColumnNames += $uniqueName
+                }
+                
+                # Create a temporary CSV with unique headers
+                $tempCsvContent = @()
+                $tempCsvContent += $uniqueColumnNames -join ','
+                
+                # Add data rows (skip header)
+                for ($i = 1; $i -lt $lines.Count; $i++) {
+                    $tempCsvContent += $lines[$i]
+                }
+                
+                # Write temporary CSV and import it
+                $tempFile = [System.IO.Path]::GetTempFileName() + ".csv"
+                try {
+                    $tempCsvContent | Out-File -FilePath $tempFile -Encoding UTF8
+                    $csvContent = Import-Csv -Path $tempFile
+                    
+                    Write-Log "DEBUG: Successfully imported CSV with $($csvContent.Count) rows and unique column names"
+                } finally {
+                    # Clean up temp file
+                    if (Test-Path $tempFile) {
+                        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                
+                # Debug: Show what properties were imported
+                if ($csvContent.Count -gt 0) {
+                    $propertyNames = $csvContent[0].PSObject.Properties.Name
+                    Write-Log "DEBUG: Imported properties: $($propertyNames -join ', ')"
+                }
+                
+                # The CSV content is now ready to use (duplicate column names have been made unique)
                 $fileDataMap[$csvFile.Name] = $csvContent
                 
                 if ($csvContent.Count -gt 0) {
@@ -341,20 +337,18 @@ function Combine-CSVFiles {
         # Create ordered column list: metadata columns first, then data columns
         $allColumns = [System.Collections.Generic.List[string]]::new()
         
-        # Add metadata columns in the specified order (if enabled)
-        if ($script:config.General.IncludeSourceFile -eq "true") {
-            $allColumns.Add("SourceFile")
-        }
-        if ($script:config.General.IncludeFileCreationTime -eq "true") {
-            $allColumns.Add("FileCreationTime")
+        # Add metadata column (if enabled)
+        if ($script:config.General.IncludeTimestamp -eq "true") {
+            $allColumns.Add("Timestamp")
         }
         
         # Add data columns from existing data (if any)
         if ($existingData.Count -gt 0) {
             $existingData[0].PSObject.Properties.Name | ForEach-Object {
                 $columnName = $_
-                # Skip metadata columns as they're already added
-                if ($columnName -ne "SourceFile" -and $columnName -ne "FileCreationTime") {
+                # Skip metadata column and system properties
+                if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and 
+                    $columnName -ne "Timestamp") {
                     if (-not $allColumns.Contains($columnName)) {
                         $allColumns.Add($columnName)
                     }
@@ -384,17 +378,18 @@ function Combine-CSVFiles {
                     $unifiedRow[$column] = ""
                 }
                 
-                # Fill in actual values from this row
+                # Fill in actual values from this row (exclude system properties)
                 $row.PSObject.Properties | ForEach-Object {
-                    $unifiedRow[$_.Name] = $_.Value
+                    # Only include properties that are actual data columns
+                    if ($_.Name -notmatch '^(PSObject|PSTypeNames|NullData)' -and $allColumns.Contains($_.Name)) {
+                        $unifiedRow[$_.Name] = $_.Value
+                    }
                 }
                 
-                # Add metadata if enabled
-                if ($script:config.General.IncludeSourceFile -eq "true") {
-                    $unifiedRow["SourceFile"] = $csvFile.Name
-                }
-                if ($script:config.General.IncludeFileCreationTime -eq "true") {
-                    $unifiedRow["FileCreationTime"] = $csvFile.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
+                # Add timestamp metadata if enabled (keep full filename including .csv)
+                if ($script:config.General.IncludeTimestamp -eq "true") {
+                    # Use the full filename (including .csv extension) to prevent Excel scientific notation
+                    $unifiedRow["Timestamp"] = $csvFile.Name
                 }
                 
                 $newData += [PSCustomObject]$unifiedRow
@@ -412,9 +407,9 @@ function Combine-CSVFiles {
                     $expandedRow[$column] = ""
                 }
                 
-                # Fill in existing values
+                # Fill in existing values (exclude system properties)
                 $row.PSObject.Properties | ForEach-Object {
-                    if ($allColumns.Contains($_.Name)) {
+                    if ($_.Name -notmatch '^(PSObject|PSTypeNames|NullData)' -and $allColumns.Contains($_.Name)) {
                         $expandedRow[$_.Name] = $_.Value
                     }
                 }
@@ -429,15 +424,14 @@ function Combine-CSVFiles {
         
         Write-Log "Final dataset: $($combinedData.Count) total rows ($($existingData.Count) existing + $($newData.Count) new)"
         
-        # Remove duplicates if enabled and both metadata columns are present
+        # Remove duplicates if enabled and timestamp column is present
         if ($script:config.General.RemoveDuplicates -eq "true" -and 
-            $script:config.General.IncludeSourceFile -eq "true" -and 
-            $script:config.General.IncludeFileCreationTime -eq "true") {
+            $script:config.General.IncludeTimestamp -eq "true") {
             
             $originalCount = $combinedData.Count
             Write-Log "Removing duplicates from $originalCount rows..."
             
-            # Create a hashtable to track unique rows (excluding metadata columns)
+            # Create a hashtable to track unique rows (excluding metadata column)
             $uniqueRows = @{}
             $deduplicatedData = @()
             
@@ -445,7 +439,7 @@ function Combine-CSVFiles {
                 # Create a hash key from all data columns (excluding metadata)
                 $dataValues = @()
                 foreach ($column in $allColumns) {
-                    if ($column -ne "SourceFile" -and $column -ne "FileCreationTime") {
+                    if ($column -ne "Timestamp") {
                         $value = if ($row.$column) { $row.$column.ToString().Trim() } else { "" }
                         $dataValues += $value
                     }
@@ -474,11 +468,11 @@ function Combine-CSVFiles {
                 New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
             }
             
-            # Use persistent popup system for file-in-use handling
-            $writeSuccess = Write-CSVWithPopup -Data $combinedData -OutputPath $actualOutputPath
+            # Use simple file writing with retry on next iteration
+            $writeSuccess = Write-CSV -Data $combinedData -OutputPath $actualOutputPath
             
             if (!$writeSuccess) {
-                Write-Log "Failed to write combined CSV file" "ERROR"
+                Write-Log "CSV write skipped due to file access issue - will retry on next iteration" "WARNING"
                 return $null
             }
             
@@ -566,10 +560,10 @@ function Get-CurrentOutputPath {
 
 # Creates a snapshot of all CSV files in a folder for change detection
 # Returns hashtable with file information including names, sizes, dates, and optional hashes
-function Take-FileSnapshot {
+function Get-FileSnapshot {
     param([string]$FolderPath)  # Path to folder to snapshot
     
-    Write-Log "DEBUG: Take-FileSnapshot called for: $FolderPath"
+    Write-Log "DEBUG: Get-FileSnapshot called for: $FolderPath"
     
     $snapshot = @{
         Files = @{}
@@ -614,7 +608,7 @@ function Take-FileSnapshot {
         return $snapshot
     }
     catch {
-        Write-Log "ERROR: Exception in Take-FileSnapshot: $($_.Exception.Message)" "ERROR"
+        Write-Log "ERROR: Exception in Get-FileSnapshot: $($_.Exception.Message)" "ERROR"
         Write-Log "DEBUG: Returning empty snapshot due to error"
         return $snapshot
     }
@@ -756,7 +750,7 @@ $inputFolder = $script:config.General.InputFolder
 
 # Perform initial scan of existing files
 Write-Log "Performing initial scan of existing files..."
-$outputPath = Combine-CSVFiles -InputFolder $inputFolder
+$outputPath = Merge-CSVFiles -InputFolder $inputFolder
 
 if ($outputPath) {
     Write-Log "Initial processing complete: $outputPath"
@@ -780,7 +774,7 @@ Write-Log "File hashing enabled: $($script:config.Advanced.UseFileHashing)"
 Write-Log "File stability wait time: $($script:config.Advanced.WaitForStableFile)ms"
 
 # Take initial file snapshot
-$lastSnapshot = Take-FileSnapshot $inputFolder
+$lastSnapshot = Get-FileSnapshot $inputFolder
 
 Write-Log "CSV Combiner is now running in polling mode."
 Write-Log "The script will check for changes every ${pollingInterval} seconds in: $inputFolder"
@@ -804,9 +798,9 @@ try {
         
         # Take new snapshot and compare
         try {
-            Write-Log "DEBUG: Calling Take-FileSnapshot for: $inputFolder"
+            Write-Log "DEBUG: Calling Get-FileSnapshot for: $inputFolder"
             $snapshotStartTime = Get-Date
-            $currentSnapshot = Take-FileSnapshot $inputFolder
+            $currentSnapshot = Get-FileSnapshot $inputFolder
             $snapshotDuration = (Get-Date) - $snapshotStartTime
             Write-Log "DEBUG: Snapshot took $($snapshotDuration.TotalSeconds) seconds"
             
@@ -829,8 +823,8 @@ try {
                 # Use additive processing with change information
                 Write-Log "Performing additive update based on detected changes..."
                 
-                # Call the Combine-CSVFiles function with changes information
-                $outputPath = Combine-CSVFiles -InputFolder $script:config.General.InputFolder -Changes $changes
+                # Call the Merge-CSVFiles function with changes information
+                $outputPath = Merge-CSVFiles -InputFolder $script:config.General.InputFolder -Changes $changes
                 
                 if ($outputPath) {
                     Write-Log "Additive update complete: $outputPath (triggered by polling detection)"
@@ -839,7 +833,7 @@ try {
                 }
                 
                 # Update snapshot after successful processing
-                $lastSnapshot = Take-FileSnapshot $inputFolder
+                $lastSnapshot = Get-FileSnapshot $inputFolder
             } else {
                 Write-Log "DEBUG: No changes detected, continuing to next polling cycle..."
             }
