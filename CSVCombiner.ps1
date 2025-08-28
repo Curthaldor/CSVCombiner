@@ -1,5 +1,5 @@
 # ==============================================================================
-# CSV Combiner Script v2.0
+# CSV Combiner Script v2.3
 # ==============================================================================
 # Author: Curt Haldorson, GitHub Copilot Assistant
 # Created: August 2025
@@ -9,7 +9,8 @@
 # - Additive processing (preserves existing data when new files are added)
 # - Unified schema merging (handles different column structures)
 # - Configurable timestamp metadata column (extracted from filename)
-# - Streaming append processing (no duplicate checking)
+# - High-performance streaming processing for maximum throughput
+# - Optional filename format validation (14-digit timestamp format)
 # - Polling-based file monitoring (reliable, no admin privileges required)
 # - Automatic backup management with configurable retention
 # - File stability checks to prevent processing incomplete files
@@ -23,6 +24,11 @@
 # - Windows PowerShell 5.1+ (built into Windows 10/11)
 # - CSVCombiner.ini configuration file
 # - Write access to input/output folders
+#
+# FILENAME REQUIREMENTS (when ValidateFilenameFormat=true):
+# - Input CSV files must follow format: YYYYMMDDHHMMSS.csv
+# - Example: 20250825160159.csv (exactly 14 digits + .csv)
+# - Invalid examples: data.csv, report_2025.csv, 2025-08-25.csv
 #
 # ==============================================================================
 
@@ -138,6 +144,29 @@ function Write-Log {
     }
 }
 
+# Function to validate filename format
+function Test-FilenameFormat {
+    param([string]$FileName)
+    
+    # Check if filename validation is enabled
+    if ($script:config.General.ValidateFilenameFormat -ne "true") {
+        return $true  # Skip validation if disabled
+    }
+    
+    # Expected format: YYYYMMDDHHMMSS.csv (exactly 14 digits + .csv)
+    # Simple pattern: exactly 14 digits followed by .csv
+    $pattern = "^\d{14}\.csv$"
+    
+    if ($FileName -match $pattern) {
+        Write-Log "Valid filename format: $FileName"
+        return $true
+    }
+    else {
+        Write-Log "Invalid filename format: $FileName (expected: 14 digits + .csv, e.g., 20250825160159.csv)" "WARNING"
+        return $false
+    }
+}
+
 # Function to write CSV file with simple retry logic
 function Write-CSV {
     param(
@@ -246,6 +275,13 @@ function Merge-CSVFiles {
         $fileDataMap = @{}
         foreach ($csvFile in $filesToProcess) {
             Write-Log "Processing: $($csvFile.Name)"
+            
+            # Validate filename format if enabled
+            if (!(Test-FilenameFormat -FileName $csvFile.Name)) {
+                Write-Log "Skipping file with invalid format: $($csvFile.Name)" "WARNING"
+                $fileDataMap[$csvFile.Name] = @()
+                continue
+            }
             
             try {
                 # Check if file is empty or has no content
@@ -549,6 +585,13 @@ function Get-FileSnapshot {
         
         foreach ($file in $csvFiles) {
             Write-Log "DEBUG: Processing file: $($file.Name)"
+            
+            # Validate filename format if enabled
+            if (!(Test-FilenameFormat -FileName $file.Name)) {
+                Write-Log "DEBUG: Skipping file with invalid format in snapshot: $($file.Name)" "WARNING"
+                continue
+            }
+            
             $fileHash = ""
             if ($script:config.Advanced.UseFileHashing -eq $true) {
                 Write-Log "DEBUG: Calculating hash for: $($file.Name)"
@@ -660,6 +703,12 @@ function Wait-ForFileStability {
     $csvFiles = Get-ChildItem -Path $FolderPath -Filter "*.csv" -File -ErrorAction SilentlyContinue
     
     foreach ($file in $csvFiles) {
+        # Skip files that don't match the expected format
+        if (!(Test-FilenameFormat -FileName $file.Name)) {
+            Write-Log "Skipping stability check for invalid filename: $($file.Name)" "WARNING"
+            continue
+        }
+        
         $retryCount = 0
         $isStable = $false
         

@@ -1,4 +1,4 @@
-# CSV Combiner v2.0 - Advanced Automated CSV File Combination Tool
+# CSV Combiner v2.3 - Advanced Automated CSV File Combination Tool
 
 This tool automatically monitors a folder for CSV files and combines them into a master CSV file using additive processing, perfect for consolidating data files into a OneDrive location for remote access.
 
@@ -8,7 +8,8 @@ This tool automatically monitors a folder for CSV files and combines them into a
 - **Polling-Based Monitoring**: Reliable file change detection without admin privileges
 - **Unified Schema Merging**: Handles CSV files with different column structures
 - **Configurable Metadata**: Optional source file name and creation time columns
-- **Duplicate Removal**: Optional deduplication based on data content
+- **High-Performance Processing**: Fast streaming append without data filtering
+- **Optional Filename Validation**: Enforces 14-digit timestamp format (YYYYMMDDHHMMSS.csv)
 - **Advanced Backup System**: Numbered backups with configurable retention
 - **File Stability Checks**: Prevents processing of incomplete files
 - **Simple Retry Logic**: Waits for next iteration when files are in use
@@ -17,8 +18,8 @@ This tool automatically monitors a folder for CSV files and combines them into a
 
 ## Files Included
 
-- `CSVCombiner.ps1` - Main PowerShell script (v2.0 with additive processing)
-- `CSVCombiner.ini` - Configuration file with advanced options
+- `CSVCombiner.ps1` - Main PowerShell script (v2.3 with high-performance processing)
+- `CSVCombiner.ini` - Configuration file with filename validation options
 - `StartCSVCombiner.bat` - Batch file for easy startup with PID management
 - `StopCSVCombiner.bat` - Batch file to safely stop the running process
 - `README.md` - This documentation
@@ -32,7 +33,7 @@ This tool automatically monitors a folder for CSV files and combines them into a
    - Set `InputFolder` to the folder containing your CSV files
    - Set `OutputFolder` to your desired OneDrive location
    - Set `OutputBaseName` for the master file naming
-   - Adjust metadata and duplicate removal settings as needed
+   - Configure filename validation and metadata settings as needed
 
 2. **Test the Script**:
    - Double-click `StartCSVCombiner.bat` to test
@@ -66,7 +67,11 @@ Edit `CSVCombiner.ini` to customize behavior:
 
 ### Metadata Options
 - `IncludeTimestamp`: Add source filename as timestamp column (true/false)
-- `RemoveDuplicates`: Remove duplicate rows based on data content (requires IncludeTimestamp to be enabled)
+
+### Filename Validation Options
+- `ValidateFilenameFormat`: Enforce 14-digit timestamp format YYYYMMDDHHMMSS.csv (true/false)
+  - When enabled: Only files like "20250825160159.csv" will be processed
+  - When disabled: Any .csv file will be processed regardless of filename
 
 ### Backup Settings
 - `MaxBackups`: Number of backup copies to keep (0 = infinite, 1 = always overwrite)
@@ -101,13 +106,20 @@ If you get execution policy errors:
 ### Files Not Combining
 - Check the log output for error messages
 - Verify CSV files are properly formatted (headers in first row)
+- If filename validation is enabled, ensure files follow YYYYMMDDHHMMSS.csv format
 - Ensure you have write permissions to the output location
 - Check that polling is detecting file changes (watch console output)
 
-### Duplicate Data Issues
-- Enable `RemoveDuplicates=true` in configuration (requires IncludeTimestamp to be enabled)
-- Verify that `IncludeTimestamp=true` for proper duplicate detection
-- Check that data columns are consistent across CSV files
+### Filename Validation Issues
+- Check that files follow the exact format: 14 digits + .csv (e.g., "20250825160159.csv")
+- Disable validation by setting `ValidateFilenameFormat=false` if needed
+- Invalid examples: "data.csv", "2025-08-25.csv", "20250825.csv" (too short)
+
+### Data Processing Notes
+- **Fast Processing**: v2.3 optimized for maximum throughput and performance
+- All rows from all input files are preserved in the output
+- Data is efficiently appended with minimal processing overhead
+- For specialized data filtering, use external tools or previous versions
 
 ### Performance Issues
 - Adjust `PollingInterval` (lower = more responsive, higher = less CPU usage)
@@ -195,6 +207,22 @@ This script only uses built-in Windows PowerShell features and does not require:
 - Additional software installation
 - Network connections (except to OneDrive)
 - Registry modifications
+
+## Version History
+
+### v2.3 (Current)
+- **Enhanced**: Optional filename format validation (14-digit timestamp format)
+- **Optimized**: High-performance streaming processing
+- **Improved**: Better error messages and validation feedback
+- **Simplified**: Streamlined data processing workflow
+
+### v2.2
+- **Previous Version**: Alternative processing approach
+- **Features**: Different data handling methodology
+
+### v2.0-2.1
+- **Foundation**: Initial additive processing implementation
+- **Core Features**: Polling-based monitoring, schema merging, backup management
 
 ## Support
 
