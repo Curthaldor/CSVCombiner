@@ -1,8 +1,9 @@
 # ==============================================================================
-# CSV Combiner Script v2.3
+# CSV Combiner Script v2.4 - Modular Architecture
 # ==============================================================================
 # Author: Curt Haldorson, GitHub Copilot Assistant
 # Created: August 2025
+# Updated: December 2024 - Modular architecture for improved testability
 # Purpose: Monitors a folder for CSV files and combines them into a master CSV
 # 
 # FEATURES:
@@ -16,6 +17,7 @@
 # - File stability checks to prevent processing incomplete files
 # - Simple retry logic for file-in-use scenarios (waits for next iteration)
 # - PID file management for reliable start/stop operations
+# - Modular architecture with extracted functions for better testability
 #
 # USAGE:
 #   powershell -ExecutionPolicy Bypass -File CSVCombiner.ps1 -ConfigPath CSVCombiner.ini
@@ -23,6 +25,7 @@
 # DEPENDENCIES:
 # - Windows PowerShell 5.1+ (built into Windows 10/11)
 # - CSVCombiner.ini configuration file
+# - CSVCombiner-Functions.ps1 module
 # - Write access to input/output folders
 #
 # FILENAME REQUIREMENTS (when ValidateFilenameFormat=true):
@@ -37,33 +40,15 @@ param(
     [string]$ConfigPath = ".\CSVCombiner.ini"
 )
 
-# Function to read INI file
-function Read-IniFile {
-    param([string]$FilePath)
-    
-    $ini = @{}
-    if (Test-Path $FilePath) {
-        $content = Get-Content $FilePath
-        $currentSection = "General"
-        $ini[$currentSection] = @{}
-        
-        foreach ($line in $content) {
-            $line = $line.Trim()
-            if ($line -eq "" -or $line.StartsWith("#") -or $line.StartsWith(";")) {
-                continue
-            }
-            
-            if ($line.StartsWith("[") -and $line.EndsWith("]")) {
-                $currentSection = $line.Substring(1, $line.Length - 2)
-                $ini[$currentSection] = @{}
-            }
-            elseif ($line.Contains("=")) {
-                $key, $value = $line.Split("=", 2)
-                $ini[$currentSection][$key.Trim()] = $value.Trim()
-            }
-        }
-    }
-    return $ini
+# Import functions module
+$scriptDir = Split-Path $MyInvocation.MyCommand.Path -Parent
+$functionsPath = Join-Path $scriptDir "CSVCombiner-Functions.ps1"
+if (Test-Path $functionsPath) {
+    . $functionsPath
+    Write-Verbose "Loaded functions from: $functionsPath"
+} else {
+    Write-Error "Required functions module not found: $functionsPath"
+    exit 1
 }
 
 # Function to load and validate configuration
@@ -71,7 +56,7 @@ function Initialize-Configuration {
     param([string]$ConfigPath)
     
     try {
-        Write-Log "Loading configuration from: $ConfigPath"
+        Write-Log "Loading configuration from: $ConfigPath" "INFO"
         
         # Read the configuration file
         $newConfig = Read-IniFile -FilePath $ConfigPath
@@ -109,7 +94,7 @@ function Initialize-Configuration {
         if ($outputDir -and !(Test-Path $outputDir)) {
             try {
                 New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
-                Write-Log "Created output directory: $outputDir"
+                Write-Log "Created output directory: $outputDir" "INFO"
             }
             catch {
                 Write-Log "Cannot create output directory: $outputDir - $($_.Exception.Message)" "ERROR"
@@ -120,7 +105,7 @@ function Initialize-Configuration {
         # All validation passed - update the global configuration
         $script:config = $newConfig
         
-        Write-Log "Configuration loaded and validated successfully"
+        Write-Log "Configuration loaded and validated successfully" "INFO"
         return $true
     }
     catch {
@@ -130,43 +115,7 @@ function Initialize-Configuration {
     }
 }
 
-# Function to write log messages
-function Write-Log {
-    param([string]$Message, [string]$Level = "INFO")
-    
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logMessage = "[$timestamp] [$Level] $Message"
-    Write-Host $logMessage
-    
-    # Also write to log file if specified in config
-    if ($script:config.General.LogFile) {
-        Add-Content -Path $script:config.General.LogFile -Value $logMessage -ErrorAction SilentlyContinue
-    }
-}
-
 # Function to validate filename format
-function Test-FilenameFormat {
-    param([string]$FileName)
-    
-    # Check if filename validation is enabled
-    if ($script:config.General.ValidateFilenameFormat -ne "true") {
-        return $true  # Skip validation if disabled
-    }
-    
-    # Expected format: YYYYMMDDHHMMSS.csv (exactly 14 digits + .csv)
-    # Simple pattern: exactly 14 digits followed by .csv
-    $pattern = "^\d{14}\.csv$"
-    
-    if ($FileName -match $pattern) {
-        Write-Log "Valid filename format: $FileName"
-        return $true
-    }
-    else {
-        Write-Log "Invalid filename format: $FileName (expected: 14 digits + .csv, e.g., 20250825160159.csv)" "WARNING"
-        return $false
-    }
-}
-
 # Function to write CSV file with simple retry logic
 function Write-CSV {
     param(
@@ -274,11 +223,12 @@ function Merge-CSVFiles {
         $dataColumns = [System.Collections.Generic.HashSet[string]]::new()
         $fileDataMap = @{}
         foreach ($csvFile in $filesToProcess) {
-            Write-Log "Processing: $($csvFile.Name)"
+            Write-Log "Processing: $($csvFile.Name)" "INFO" $script:config.General.LogFile
             
             # Validate filename format if enabled
-            if (!(Test-FilenameFormat -FileName $csvFile.Name)) {
-                Write-Log "Skipping file with invalid format: $($csvFile.Name)" "WARNING"
+            $validateFormat = ($script:config.General.ValidateFilenameFormat -eq "true")
+            if (!(Test-FilenameFormat -FileName $csvFile.Name -ValidateFormat $validateFormat)) {
+                Write-Log "Skipping file with invalid format: $($csvFile.Name)" "WARNING" $script:config.General.LogFile
                 $fileDataMap[$csvFile.Name] = @()
                 continue
             }
@@ -370,87 +320,36 @@ function Merge-CSVFiles {
             }
         }
         
-        # Create ordered column list: metadata columns first, then data columns
-        $allColumns = [System.Collections.Generic.List[string]]::new()
-        
-        # Add metadata column (if enabled)
-        if ($script:config.General.IncludeTimestamp -eq "true") {
-            $allColumns.Add("Timestamp")
-        }
-        
-        # Add data columns from existing data (if any)
+        # Create unified schema using modular function
+        $existingColumns = @()
         if ($existingData.Count -gt 0) {
-            $existingData[0].PSObject.Properties.Name | ForEach-Object {
-                $columnName = $_
-                # Skip metadata column and system properties
-                if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and 
-                    $columnName -ne "Timestamp") {
-                    if (-not $allColumns.Contains($columnName)) {
-                        $allColumns.Add($columnName)
-                    }
-                }
-            }
+            $existingColumns = $existingData[0].PSObject.Properties.Name
         }
+        $newColumns = $dataColumns.ToArray()
+        $includeTimestamp = ($script:config.General.IncludeTimestamp -eq "true")
+        $allColumns = Merge-ColumnSchemas -ExistingColumns $existingColumns -NewColumns $newColumns -IncludeTimestamp $includeTimestamp
         
-        # Add new data columns
-        foreach ($columnName in $dataColumns) {
-            if (-not $allColumns.Contains($columnName)) {
-                $allColumns.Add($columnName)
-            }
-        }
+        Write-Log "Unified schema contains $($allColumns.Count) columns: $($allColumns -join ', ')" "INFO" $script:config.General.LogFile
         
-        Write-Log "Unified schema contains $($allColumns.Count) columns: $($allColumns -join ', ')"
-        
-        # Process new data from changed files
+        # Process new data from changed files using modular function
         $newData = @()
         foreach ($csvFile in $filesToProcess) {
             $csvContent = $fileDataMap[$csvFile.Name]
             
             foreach ($row in $csvContent) {
-                $unifiedRow = [ordered]@{}
-                
-                # Initialize all columns with empty values
-                foreach ($column in $allColumns) {
-                    $unifiedRow[$column] = ""
-                }
-                
-                # Fill in actual values from this row (exclude system properties)
-                $row.PSObject.Properties | ForEach-Object {
-                    # Only include properties that are actual data columns
-                    if ($_.Name -notmatch '^(PSObject|PSTypeNames|NullData)' -and $allColumns.Contains($_.Name)) {
-                        $unifiedRow[$_.Name] = $_.Value
-                    }
-                }
-                
-                # Add timestamp metadata if enabled (keep full filename including .csv)
-                if ($script:config.General.IncludeTimestamp -eq "true") {
-                    # Use the full filename (including .csv extension) to prevent Excel scientific notation
-                    $unifiedRow["Timestamp"] = $csvFile.Name
-                }
-                
-                $newData += [PSCustomObject]$unifiedRow
+                # Use modular function to create unified row
+                $timestampValue = if ($includeTimestamp) { $csvFile.Name } else { $null }
+                $unifiedRow = New-UnifiedRow -SourceRow $row -UnifiedSchema $allColumns -TimestampValue $timestampValue
+                $newData += $unifiedRow
             }
         }
         
-        # Ensure existing data has all columns (expand schema if needed)
+        # Ensure existing data has all columns (expand schema if needed) using modular function
         if ($existingData.Count -gt 0) {
             $expandedExistingData = @()
             foreach ($row in $existingData) {
-                $expandedRow = [ordered]@{}
-                
-                # Initialize all columns
-                foreach ($column in $allColumns) {
-                    $expandedRow[$column] = ""
-                }
-                
-                # Fill in existing values (exclude system properties)
-                $row.PSObject.Properties | ForEach-Object {
-                    if ($_.Name -notmatch '^(PSObject|PSTypeNames|NullData)' -and $allColumns.Contains($_.Name)) {
-                        $expandedRow[$_.Name] = $_.Value
-                    }
-                }
-                
-                $expandedExistingData += [PSCustomObject]$expandedRow
+                $expandedRow = New-UnifiedRow -SourceRow $row -UnifiedSchema $allColumns
+                $expandedExistingData += $expandedRow
             }
             $existingData = $expandedExistingData
         }
@@ -461,8 +360,8 @@ function Merge-CSVFiles {
         Write-Log "Final dataset: $($combinedData.Count) total rows ($($existingData.Count) existing + $($newData.Count) new)"
         
         if ($combinedData.Count -gt 0) {
-            # Now get the actual output path (this will handle backup shifting)
-            $actualOutputPath = Get-CurrentOutputPath
+            # Now get the actual output path using modular function
+            $actualOutputPath = Get-CurrentOutputPath -OutputFolder $script:config.General.OutputFolder -BaseName $script:config.General.OutputBaseName -MaxBackups ([int]$script:config.General.MaxBackups)
             
             # Create output directory if it doesn't exist
             $outputDir = Split-Path -Path $actualOutputPath -Parent
@@ -491,247 +390,9 @@ function Merge-CSVFiles {
     }
 }
 
-# Function to get the numbered output file path
-function Get-NumberedOutputPath {
-    param(
-        [string]$BaseName,
-        [string]$OutputDir,
-        [int]$Number = 1
-    )
-    
-    $extension = ".csv"
-    $numberedName = "${BaseName}_${Number}${extension}"
-    return Join-Path $OutputDir $numberedName
-}
-
-# Function to shift backup files and get current output path
-function Get-CurrentOutputPath {
-    try {
-        $baseName = $script:config.General.OutputBaseName
-        $outputDir = $script:config.General.OutputFolder
-        $maxBackups = [int]$script:config.General.MaxBackups
-        
-        # If MaxBackups is 1, always use suffix 1
-        if ($maxBackups -eq 1) {
-            return Get-NumberedOutputPath -BaseName $baseName -OutputDir $outputDir -Number 1
-        }
-        
-        # For MaxBackups > 1 or MaxBackups = 0 (infinite), shift existing files
-        $currentPath = Get-NumberedOutputPath -BaseName $baseName -OutputDir $outputDir -Number 1
-        
-        # Find existing numbered files
-        $pattern = "${baseName}_*.csv"
-        $existingFiles = Get-ChildItem -Path $outputDir -Filter $pattern -File -ErrorAction SilentlyContinue | 
-                        Where-Object { $_.BaseName -match "^${baseName}_(\d+)$" } |
-                        Sort-Object { [int]($_.BaseName -replace "^${baseName}_", "") } -Descending
-        
-        if ($existingFiles.Count -gt 0) {
-            # Shift existing files up by one number
-            foreach ($file in $existingFiles) {
-                if ($file.BaseName -match "^${baseName}_(\d+)$") {
-                    $currentNum = [int]$matches[1]
-                    $newNum = $currentNum + 1
-                    $newPath = Get-NumberedOutputPath -BaseName $baseName -OutputDir $outputDir -Number $newNum
-                    
-                    # Only shift if we're keeping this backup (MaxBackups = 0 means infinite)
-                    if ($maxBackups -eq 0 -or $newNum -le $maxBackups) {
-                        Move-Item -Path $file.FullName -Destination $newPath -Force
-                        Write-Log "Shifted backup: $($file.Name) -> $(Split-Path $newPath -Leaf)"
-                    }
-                    else {
-                        # Delete files that exceed MaxBackups
-                        Remove-Item -Path $file.FullName -Force
-                        Write-Log "Deleted old backup: $($file.Name) (exceeded MaxBackups=$maxBackups)"
-                    }
-                }
-            }
-        }
-        
-        return $currentPath
-    }
-    catch {
-        Write-Log "Error managing numbered output files: $($_.Exception.Message)" "ERROR"
-        # Fallback to basic path construction
-        return Join-Path $script:config.General.OutputFolder "$($script:config.General.OutputBaseName)_1.csv"
-    }
-}
-
 # ===========================
 # POLLING-BASED FILE MONITORING FUNCTIONS
 # ===========================
-
-# Creates a snapshot of all CSV files in a folder for change detection
-# Returns hashtable with file information including names, sizes, dates, and optional hashes
-function Get-FileSnapshot {
-    param([string]$FolderPath)  # Path to folder to snapshot
-    
-    Write-Log "DEBUG: Get-FileSnapshot called for: $FolderPath"
-    
-    $snapshot = @{
-        Files = @{}
-        LastCheck = Get-Date
-    }
-    
-    try {
-        Write-Log "DEBUG: Checking if folder exists: $FolderPath"
-        if (!(Test-Path $FolderPath)) {
-            Write-Log "ERROR: Folder does not exist: $FolderPath" "ERROR"
-            return $snapshot
-        }
-        
-        Write-Log "DEBUG: Getting CSV files from: $FolderPath"
-        $csvFiles = Get-ChildItem -Path $FolderPath -Filter "*.csv" -File -ErrorAction Stop
-        Write-Log "DEBUG: Found $($csvFiles.Count) CSV files"
-        
-        foreach ($file in $csvFiles) {
-            Write-Log "DEBUG: Processing file: $($file.Name)"
-            
-            # Validate filename format if enabled
-            if (!(Test-FilenameFormat -FileName $file.Name)) {
-                Write-Log "DEBUG: Skipping file with invalid format in snapshot: $($file.Name)" "WARNING"
-                continue
-            }
-            
-            $fileHash = ""
-            if ($script:config.Advanced.UseFileHashing -eq $true) {
-                Write-Log "DEBUG: Calculating hash for: $($file.Name)"
-                try {
-                    $fileHash = (Get-FileHash $file.FullName -Algorithm MD5).Hash
-                    Write-Log "DEBUG: Hash calculated successfully for: $($file.Name)"
-                } catch {
-                    Write-Log "Warning: Could not calculate hash for $($file.Name): $_" "WARNING"
-                    $fileHash = "HASH_ERROR"
-                }
-            }
-            
-            Write-Log "DEBUG: Adding file to snapshot: $($file.Name)"
-            $snapshot.Files[$file.Name] = @{
-                LastWriteTime = $file.LastWriteTime
-                Size = $file.Length
-                Hash = $fileHash
-                FullPath = $file.FullName
-            }
-        }
-        
-        Write-Log "DEBUG: Snapshot complete. Total files in snapshot: $($snapshot.Files.Count)"
-        return $snapshot
-    }
-    catch {
-        Write-Log "ERROR: Exception in Get-FileSnapshot: $($_.Exception.Message)" "ERROR"
-        Write-Log "DEBUG: Returning empty snapshot due to error"
-        return $snapshot
-    }
-}
-
-# Compares two file snapshots and returns detailed change information
-# Detects added, removed, and modified files with descriptive change details
-function Compare-Snapshots {
-    param($OldSnapshot, $NewSnapshot)  # Snapshot objects to compare
-    
-    Write-Log "DEBUG: Compare-Snapshots called"
-    Write-Log "DEBUG: Old snapshot has $($OldSnapshot.Files.Count) files"
-    Write-Log "DEBUG: New snapshot has $($NewSnapshot.Files.Count) files"
-    
-    $changes = @{
-        HasChanges = $false
-        NewFiles = @()
-        ModifiedFiles = @()
-        DeletedFiles = @()
-        Details = @()
-    }
-    
-    Write-Log "DEBUG: Checking for new files..."
-    # Check for new files
-    foreach ($fileName in $NewSnapshot.Files.Keys) {
-        if (-not $OldSnapshot.Files.ContainsKey($fileName)) {
-            Write-Log "DEBUG: Found new file: $fileName"
-            $changes.NewFiles += $fileName
-            $changes.HasChanges = $true
-            $changes.Details += "NEW: $fileName"
-        }
-    }
-    
-    # Check for modified or deleted files
-    foreach ($fileName in $OldSnapshot.Files.Keys) {
-        if ($NewSnapshot.Files.ContainsKey($fileName)) {
-            $oldFile = $OldSnapshot.Files[$fileName]
-            $newFile = $NewSnapshot.Files[$fileName]
-            
-            $isModified = $false
-            
-            # Check size and timestamp first (fast)
-            if ($oldFile.Size -ne $newFile.Size -or $oldFile.LastWriteTime -ne $newFile.LastWriteTime) {
-                $isModified = $true
-            }
-            # If hashing is enabled and basic checks passed, compare hashes (slower but accurate)
-            elseif ($script:config.Advanced.UseFileHashing -eq $true -and $oldFile.Hash -ne "" -and $newFile.Hash -ne "" -and $oldFile.Hash -ne $newFile.Hash) {
-                $isModified = $true
-            }
-            
-            if ($isModified) {
-                $changes.ModifiedFiles += $fileName
-                $changes.HasChanges = $true
-                $changes.Details += "MODIFIED: $fileName"
-            }
-        } else {
-            # File was deleted
-            Write-Log "DEBUG: Found deleted file: $fileName"
-            $changes.DeletedFiles += $fileName
-            $changes.HasChanges = $true
-            $changes.Details += "DELETED: $fileName"
-        }
-    }
-    
-    Write-Log "DEBUG: Comparison complete - Changes: $($changes.HasChanges), New: $($changes.NewFiles.Count), Modified: $($changes.ModifiedFiles.Count), Deleted: $($changes.DeletedFiles.Count)"
-    return $changes
-}
-
-# Waits for files to stabilize before processing to avoid reading incomplete files
-# Checks if files are locked and retries until they're accessible
-function Wait-ForFileStability {
-    param([string]$FolderPath)  # Path to folder containing files to check
-    
-    $waitTime = [int]$script:config.Advanced.WaitForStableFile
-    $maxRetries = [int]$script:config.Advanced.MaxPollingRetries
-    
-    if ($waitTime -le 0) { return $true }
-    
-    Write-Log "Waiting ${waitTime}ms for files to stabilize..."
-    Start-Sleep -Milliseconds $waitTime
-    
-    # Verify files are not locked
-    $csvFiles = Get-ChildItem -Path $FolderPath -Filter "*.csv" -File -ErrorAction SilentlyContinue
-    
-    foreach ($file in $csvFiles) {
-        # Skip files that don't match the expected format
-        if (!(Test-FilenameFormat -FileName $file.Name)) {
-            Write-Log "Skipping stability check for invalid filename: $($file.Name)" "WARNING"
-            continue
-        }
-        
-        $retryCount = 0
-        $isStable = $false
-        
-        while ($retryCount -lt $maxRetries -and -not $isStable) {
-            try {
-                # Try to open file exclusively to check if it's being written
-                $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'None')
-                $stream.Close()
-                $isStable = $true
-            } catch {
-                $retryCount++
-                Write-Log "File $($file.Name) appears to be in use, retry $retryCount/$maxRetries" "WARNING"
-                Start-Sleep -Milliseconds 500
-            }
-        }
-        
-        if (-not $isStable) {
-            Write-Log "Warning: File $($file.Name) may still be in use after $maxRetries retries" "WARNING"
-        }
-    }
-    
-    return $true
-}
 
 # Main execution
 Write-Log "=== CSV Combiner Started ==="
@@ -789,7 +450,9 @@ Write-Log "File hashing enabled: $($script:config.Advanced.UseFileHashing)"
 Write-Log "File stability wait time: $($script:config.Advanced.WaitForStableFile)ms"
 
 # Take initial file snapshot
-$lastSnapshot = Get-FileSnapshot $inputFolder
+$useFileHashing = ($script:config.Advanced.UseFileHashing -eq "true")
+$validateFormat = ($script:config.General.ValidateFilenameFormat -eq "true")
+$lastSnapshot = Get-FileSnapshot -FolderPath $inputFolder -UseFileHashing $useFileHashing -ValidateFilenameFormat $validateFormat
 
 Write-Log "CSV Combiner is now running in polling mode."
 Write-Log "The script will check for changes every ${pollingInterval} seconds in: $inputFolder"
@@ -815,13 +478,13 @@ try {
         try {
             Write-Log "DEBUG: Calling Get-FileSnapshot for: $inputFolder"
             $snapshotStartTime = Get-Date
-            $currentSnapshot = Get-FileSnapshot $inputFolder
+            $currentSnapshot = Get-FileSnapshot -FolderPath $inputFolder -UseFileHashing $useFileHashing -ValidateFilenameFormat $validateFormat
             $snapshotDuration = (Get-Date) - $snapshotStartTime
             Write-Log "DEBUG: Snapshot took $($snapshotDuration.TotalSeconds) seconds"
             
             Write-Log "DEBUG: Snapshot taken, comparing with previous snapshot..."
             $compareStartTime = Get-Date
-            $changes = Compare-Snapshots $lastSnapshot $currentSnapshot
+            $changes = Compare-FileSnapshots -OldSnapshot $lastSnapshot -NewSnapshot $currentSnapshot -ValidateFilenameFormat $validateFormat
             $compareDuration = (Get-Date) - $compareStartTime
             Write-Log "DEBUG: Comparison took $($compareDuration.TotalSeconds) seconds"
             Write-Log "DEBUG: Comparison complete. HasChanges: $($changes.HasChanges)"
@@ -833,7 +496,10 @@ try {
                 }
                 
                 # Wait for files to stabilize
-                $null = Wait-ForFileStability $inputFolder
+                $csvFiles = Get-ChildItem -Path $inputFolder -Filter "*.csv" -File
+                $waitTime = [int]$script:config.Advanced.WaitForStableFile
+                $maxRetries = [int]$script:config.Advanced.MaxPollingRetries
+                $null = Wait-ForFileStability -CsvFiles $csvFiles -WaitTime $waitTime -MaxRetries $maxRetries -ValidateFilenameFormat $validateFormat
                 
                 # Use additive processing with change information
                 Write-Log "Performing additive update based on detected changes..."
@@ -848,7 +514,7 @@ try {
                 }
                 
                 # Update snapshot after successful processing
-                $lastSnapshot = Get-FileSnapshot $inputFolder
+                $lastSnapshot = Get-FileSnapshot -FolderPath $inputFolder -UseFileHashing $useFileHashing -ValidateFilenameFormat $validateFormat
             } else {
                 Write-Log "DEBUG: No changes detected, continuing to next polling cycle..."
             }
