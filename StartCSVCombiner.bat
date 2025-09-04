@@ -41,9 +41,9 @@ echo Use Ctrl+C to stop the CSV Combiner when needed.
 echo.
 
 REM Launch PowerShell in background without waiting for user input
-start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\CSVCombiner.ps1' -ConfigPath 'CSVCombiner.ini'"
+start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\CSVCombiner.ps1' -ConfigPath 'CSVCombiner.ini' -Monitor"
 
-echo CSV Combiner started in background.
+echo CSV Combiner started in background with continuous monitoring.
 echo Use StopCSVCombiner.bat to stop it safely.
 echo.
 timeout /t 3 >nul
