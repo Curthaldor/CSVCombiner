@@ -7,7 +7,7 @@ REM If the script is already running, it will be stopped and restarted
 echo CSV Combiner Management Script
 echo ===============================
 
-REM Change to the script directory
+REM Change to the script directory (we're already in the root directory)
 cd /d "%~dp0"
 
 REM Check if PowerShell execution policy allows scripts (informational only)
@@ -41,7 +41,7 @@ echo Use Ctrl+C to stop the CSV Combiner when needed.
 echo.
 
 REM Launch PowerShell in background without waiting for user input
-start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\CSVCombiner.ps1' -ConfigPath 'CSVCombiner.ini' -Monitor"
+start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\src\CSVCombiner.ps1' -ConfigPath '.\config\CSVCombiner.ini' -Monitor"
 
 echo CSV Combiner started in background with continuous monitoring.
 echo Use StopCSVCombiner.bat to stop it safely.
