@@ -5,19 +5,10 @@ REM This batch file stops any running CSV combiner PowerShell scripts
 echo CSV Combiner Stop Script
 echo =========================
 
-REM Change to the script directory
+REM Change to the script directory (we're already in the root directory)
 cd /d "%~dp0"
 
-@echo off
 setlocal enabledelayedexpansion
-REM CSV Combiner Stop Script
-REM This batch file stops any running CSV combiner PowerShell scripts
-
-echo CSV Combiner Stop Script
-echo =========================
-
-REM Change to the script directory
-cd /d "%~dp0"
 
 echo Searching for CSV Combiner processes...
 

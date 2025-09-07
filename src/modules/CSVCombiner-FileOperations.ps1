@@ -1,56 +1,8 @@
 # ==============================================================================
-# CSV Combiner Functions Module v2.4
+# CSV Combiner File Operations Module v3.0
 # ==============================================================================
-# Author: Curt Haldorson, GitHub Copilot Assistant
-# Created: August 2025
-# Purpose: Modular functions for CSV processing and file operations
+# Purpose: File system operations, monitoring, and validation functions
 # ==============================================================================
-
-# Function to read INI file
-function Read-IniFile {
-    param([string]$FilePath)
-    
-    $ini = @{}
-    if (Test-Path $FilePath) {
-        $content = Get-Content $FilePath
-        $currentSection = "General"
-        $ini[$currentSection] = @{}
-        
-        foreach ($line in $content) {
-            $line = $line.Trim()
-            if ($line -eq "" -or $line.StartsWith("#") -or $line.StartsWith(";")) {
-                continue
-            }
-            
-            if ($line.StartsWith("[") -and $line.EndsWith("]")) {
-                $currentSection = $line.Substring(1, $line.Length - 2)
-                $ini[$currentSection] = @{}
-            }
-            elseif ($line.Contains("=")) {
-                $key, $value = $line.Split("=", 2)
-                $ini[$currentSection][$key.Trim()] = $value.Trim()
-            }
-        }
-    }
-    return $ini
-}
-
-# Function to write log messages
-function Write-Log {
-    param(
-        [string]$Message,
-        [string]$Level = "INFO",
-        [string]$LogFile = $null
-    )
-    
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logMessage = "[$timestamp] [$Level] $Message"
-    Write-Host $logMessage
-    
-    if ($LogFile) {
-        Add-Content -Path $LogFile -Value $logMessage -ErrorAction SilentlyContinue
-    }
-}
 
 # Function to validate filename format
 function Test-FilenameFormat {
@@ -67,71 +19,6 @@ function Test-FilenameFormat {
     # Expected format: YYYYMMDDHHMMSS.csv (exactly 14 digits + .csv)
     $pattern = "^\d{14}\.csv$"
     return ($FileName -match $pattern)
-}
-
-# Function to get numbered output file path
-function Get-NumberedOutputPath {
-    param(
-        [string]$OutputFolder,
-        [string]$BaseName,
-        [int]$Number = 1
-    )
-    
-    return Join-Path $OutputFolder "${BaseName}_${Number}.csv"
-}
-
-# Function to get current output path with backup management
-function Get-CurrentOutputPath {
-    param(
-        [string]$OutputFolder,
-        [string]$BaseName,
-        [int]$MaxBackups
-    )
-    
-    try {
-        # If MaxBackups is 1, always use suffix 1
-        if ($MaxBackups -eq 1) {
-            return Get-NumberedOutputPath -OutputFolder $OutputFolder -BaseName $BaseName -Number 1
-        }
-        
-        # For MaxBackups > 1 or MaxBackups = 0 (infinite), shift existing files
-        $currentPath = Get-NumberedOutputPath -OutputFolder $OutputFolder -BaseName $BaseName -Number 1
-        
-        # Find existing numbered files
-        $pattern = "${BaseName}_*.csv"
-        $existingFiles = Get-ChildItem -Path $OutputFolder -Filter $pattern -File -ErrorAction SilentlyContinue | 
-                        Where-Object { $_.BaseName -match "^${BaseName}_(\d+)$" } |
-                        Sort-Object { [int]($_.BaseName -replace "^${BaseName}_", "") } -Descending
-        
-        if ($existingFiles.Count -gt 0) {
-            # Shift existing files up by one number
-            foreach ($file in $existingFiles) {
-                if ($file.BaseName -match "^${BaseName}_(\d+)$") {
-                    $currentNum = [int]$matches[1]
-                    $newNum = $currentNum + 1
-                    $newPath = Get-NumberedOutputPath -OutputFolder $OutputFolder -BaseName $BaseName -Number $newNum
-                    
-                    # Only shift if we're keeping this backup (MaxBackups = 0 means infinite)
-                    if ($MaxBackups -eq 0 -or $newNum -le $MaxBackups) {
-                        Move-Item -Path $file.FullName -Destination $newPath -Force
-                        Write-Log "Shifted backup: $($file.Name) -> $(Split-Path $newPath -Leaf)" "INFO"
-                    }
-                    else {
-                        # Delete files that exceed MaxBackups
-                        Remove-Item -Path $file.FullName -Force
-                        Write-Log "Deleted old backup: $($file.Name) (exceeded MaxBackups=$MaxBackups)" "INFO"
-                    }
-                }
-            }
-        }
-        
-        return $currentPath
-    }
-    catch {
-        Write-Log "Error managing numbered output files: $($_.Exception.Message)" "ERROR"
-        # Fallback to basic path construction
-        return Get-NumberedOutputPath -OutputFolder $OutputFolder -BaseName $BaseName -Number 1
-    }
 }
 
 # Function to create a file snapshot for change detection
@@ -204,11 +91,20 @@ function Compare-FileSnapshots {
     
     Write-Log "Comparing file snapshots" "DEBUG"
     
-    $changes = @{
+    $changes = [PSCustomObject]@{
         NewFiles = @()
         ModifiedFiles = @()
         DeletedFiles = @()
         Details = @()
+        HasChanges = $false
+    }
+    
+    # Initialize empty snapshots if null
+    if ($null -eq $OldSnapshot -or $null -eq $OldSnapshot.Files) {
+        $OldSnapshot = @{ Files = @{} }
+    }
+    if ($null -eq $NewSnapshot -or $null -eq $NewSnapshot.Files) {
+        $NewSnapshot = @{ Files = @{} }
     }
     
     # Check for new files
@@ -242,6 +138,9 @@ function Compare-FileSnapshots {
             $changes.Details += "DELETED: $fileName"
         }
     }
+    
+    # Set HasChanges flag if any changes were detected
+    $changes.HasChanges = ($changes.NewFiles.Count -gt 0 -or $changes.ModifiedFiles.Count -gt 0 -or $changes.DeletedFiles.Count -gt 0)
     
     Write-Log "Changes detected - New: $($changes.NewFiles.Count), Modified: $($changes.ModifiedFiles.Count), Deleted: $($changes.DeletedFiles.Count)" "DEBUG"
     return $changes
@@ -291,72 +190,4 @@ function Wait-ForFileStability {
     }
     
     return $true
-}
-
-# Function to merge column schemas
-function Merge-ColumnSchemas {
-    param(
-        [string[]]$ExistingColumns = @(),
-        [string[]]$NewColumns = @(),
-        [bool]$IncludeTimestamp = $true
-    )
-    
-    $allColumns = [System.Collections.Generic.List[string]]::new()
-    
-    # Add timestamp column first if enabled
-    if ($IncludeTimestamp) {
-        $allColumns.Add("Timestamp")
-    }
-    
-    # Add existing columns (excluding system properties)
-    foreach ($columnName in $ExistingColumns) {
-        if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and 
-            $columnName -ne "Timestamp" -and
-            -not $allColumns.Contains($columnName)) {
-            $allColumns.Add($columnName)
-        }
-    }
-    
-    # Add new columns
-    foreach ($columnName in $NewColumns) {
-        if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and
-            -not $allColumns.Contains($columnName)) {
-            $allColumns.Add($columnName)
-        }
-    }
-    
-    return $allColumns.ToArray()
-}
-
-# Function to create a unified row with all columns
-function New-UnifiedRow {
-    param(
-        [PSCustomObject]$SourceRow,
-        [string[]]$UnifiedSchema,
-        [string]$TimestampValue = $null
-    )
-    
-    $unifiedRow = [ordered]@{}
-    
-    # Initialize all columns with empty values
-    foreach ($column in $UnifiedSchema) {
-        $unifiedRow[$column] = ""
-    }
-    
-    # Fill in actual values from source row (exclude system properties)
-    if ($SourceRow) {
-        $SourceRow.PSObject.Properties | ForEach-Object {
-            if ($_.Name -notmatch '^(PSObject|PSTypeNames|NullData)' -and 
-                $UnifiedSchema -contains $_.Name) {
-                $unifiedRow[$_.Name] = $_.Value
-            }
-        }
-    }
-    
-    # Add timestamp if provided
-    if ($TimestampValue -and $UnifiedSchema -contains "Timestamp") {
-        $unifiedRow["Timestamp"] = $TimestampValue
-    }
-    
-    return [PSCustomObject]$unifiedRow
 }

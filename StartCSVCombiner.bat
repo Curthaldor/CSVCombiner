@@ -7,7 +7,7 @@ REM If the script is already running, it will be stopped and restarted
 echo CSV Combiner Management Script
 echo ===============================
 
-REM Change to the script directory
+REM Change to the script directory (we're already in the root directory)
 cd /d "%~dp0"
 
 REM Check if PowerShell execution policy allows scripts (informational only)
@@ -41,9 +41,26 @@ echo Use Ctrl+C to stop the CSV Combiner when needed.
 echo.
 
 REM Launch PowerShell in background without waiting for user input
-start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\CSVCombiner.ps1' -ConfigPath 'CSVCombiner.ini'"
+echo Checking StartMinimized setting from configuration...
+for /f "tokens=2 delims==" %%a in ('findstr "StartMinimized" "config\CSVCombiner.ini" 2^>nul') do set START_MINIMIZED=%%a
 
-echo CSV Combiner started in background.
+REM Remove any leading/trailing spaces from the setting
+if defined START_MINIMIZED (
+    for /f "tokens=* delims= " %%a in ("!START_MINIMIZED!") do set START_MINIMIZED=%%a
+    echo StartMinimized setting: !START_MINIMIZED!
+    if /i "!START_MINIMIZED!"=="true" (
+        echo Starting CSV Combiner minimized...
+        start "CSV Combiner" powershell -WindowStyle Minimized -ExecutionPolicy Bypass -Command "& '.\src\CSVCombiner.ps1' -ConfigPath '.\config\CSVCombiner.ini' -Monitor"
+    ) else (
+        echo Starting CSV Combiner in normal window...
+        start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\src\CSVCombiner.ps1' -ConfigPath '.\config\CSVCombiner.ini' -Monitor"
+    )
+) else (
+    echo StartMinimized setting not found, using normal window...
+    start "CSV Combiner" powershell -WindowStyle Normal -ExecutionPolicy Bypass -Command "& '.\src\CSVCombiner.ps1' -ConfigPath '.\config\CSVCombiner.ini' -Monitor"
+)
+
+echo CSV Combiner started in background with continuous monitoring.
 echo Use StopCSVCombiner.bat to stop it safely.
 echo.
 timeout /t 3 >nul

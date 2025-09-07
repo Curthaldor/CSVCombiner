@@ -1,4 +1,4 @@
-# CSV Combiner v2.3 - Advanced Automated CSV File Combination Tool
+# CSV Combiner v3.0 - Advanced Automated CSV File Combination Tool with StartMinimized Feature
 
 This tool automatically monitors a folder for CSV files and combines them into a master CSV file using additive processing, perfect for consolidating data files into a OneDrive location for remote access.
 
@@ -18,7 +18,7 @@ This tool automatically monitors a folder for CSV files and combines them into a
 
 ## Files Included
 
-- `CSVCombiner.ps1` - Main PowerShell script (v2.3 with high-performance processing)
+- `CSVCombiner.ps1` - Main PowerShell script (v3.0 with StartMinimized feature and enhanced performance)
 - `CSVCombiner.ini` - Configuration file with filename validation options
 - `StartCSVCombiner.bat` - Batch file for easy startup with PID management
 - `StopCSVCombiner.bat` - Batch file to safely stop the running process
@@ -116,7 +116,7 @@ If you get execution policy errors:
 - Invalid examples: "data.csv", "2025-08-25.csv", "20250825.csv" (too short)
 
 ### Data Processing Notes
-- **Fast Processing**: v2.3 optimized for maximum throughput and performance
+- **Fast Processing**: v3.0 optimized for maximum throughput and performance with StartMinimized feature
 - All rows from all input files are preserved in the output
 - Data is efficiently appended with minimal processing overhead
 - For specialized data filtering, use external tools or previous versions
@@ -210,7 +210,19 @@ This script only uses built-in Windows PowerShell features and does not require:
 
 ## Version History
 
-### v2.3 (Current)
+### v3.0 (Current)
+- **New Feature**: StartMinimized option for background operation
+- **Enhanced**: Comprehensive 97-test modular test suite (100% pass rate)
+- **Improved**: Enhanced batch file launchers with configuration reading
+- **Refined**: Modular architecture with improved organization
+- **Added**: Production-ready deployment with trusted execution options
+
+### v2.4
+- **Refactored**: Modular architecture with improved organization
+- **Enhanced**: Better maintainability and code separation
+- **Improved**: Module-based design for easier testing and development
+
+### v2.3
 - **Enhanced**: Optional filename format validation (14-digit timestamp format)
 - **Optimized**: High-performance streaming processing
 - **Improved**: Better error messages and validation feedback
