@@ -16,7 +16,11 @@ class CSVMonitoringService {
         $this.Logger = $logger
         $this.FileProcessor = $fileProcessor
         $this.InputFolder = $config.GetInputFolder()
-        $this.LastSnapshot = @{}
+        # Initialize with proper snapshot structure
+        $this.LastSnapshot = @{
+            Files = @{}
+            LastCheck = Get-Date
+        }
     }
     
     [void]InitializeMonitoring() {
@@ -101,19 +105,21 @@ class CSVMonitoringService {
         $compareDuration = (Get-Date) - $compareStartTime
         $this.Logger.Debug("Comparison took $($compareDuration.TotalSeconds) seconds")
         
-        # Also check if output file exists - if not, force processing
+        # Check if output file exists - if not, force full rebuild
         $outputFilePath = $this.FileProcessor.GetOutputPath()
         $outputFileExists = Test-Path $outputFilePath
         
         if (-not $outputFileExists) {
-            $this.Logger.Info("Output file does not exist, forcing reprocessing")
-            # Force processing by adding to change counts
-            $changes.NewFiles += "FORCE_REPROCESS_MISSING_OUTPUT"
-            $changes.Details += "Output file missing: $outputFilePath"
+            $this.Logger.Info("Output file does not exist, forcing complete rebuild")
+            $changes | Add-Member -NotePropertyName "ForceFullRebuild" -NotePropertyValue $true -Force
+            $changes.HasChanges = $true
+            $changes.Details += "Output file missing: $outputFilePath - performing full rebuild"
         }
-        
-        # Recalculate HasChanges to include our forced change
-        $changes.HasChanges = ($changes.NewFiles.Count -gt 0 -or $changes.ModifiedFiles.Count -gt 0 -or $changes.DeletedFiles.Count -gt 0)
+        else {
+            $changes | Add-Member -NotePropertyName "ForceFullRebuild" -NotePropertyValue $false -Force
+            # Recalculate HasChanges based on actual file changes
+            $changes.HasChanges = ($changes.NewFiles.Count -gt 0 -or $changes.ModifiedFiles.Count -gt 0 -or $changes.DeletedFiles.Count -gt 0)
+        }
         
         $this.Logger.Debug("HasChanges: $($changes.HasChanges)")
         
@@ -131,15 +137,32 @@ class CSVMonitoringService {
         # Wait for file stability
         $this.WaitForFileStability()
         
-        # Process the changes
-        $this.Logger.Info("Performing additive update based on detected changes")
+        # Process the changes - check if we need full rebuild or additive update
+        if ($changes.ForceFullRebuild) {
+            $this.Logger.Info("Performing complete rebuild due to missing output file")
+            # For full rebuild, we'll call ProcessFiles but indicate it's a full rebuild
+            # by ensuring all current files are treated as "new"
+            $csvFiles = Get-ChildItem -Path $this.InputFolder -Filter "*.csv" -File
+            $changes.NewFiles = $csvFiles
+            $changes.ModifiedFiles = @()
+            $changes.DeletedFiles = @()
+        }
+        else {
+            $this.Logger.Info("Performing additive update based on detected changes")
+        }
+        
         $outputPath = $this.FileProcessor.ProcessFiles($this.InputFolder, $changes)
         
         if ($outputPath) {
-            $this.Logger.Info("Additive update complete: $outputPath")
+            if ($changes.ForceFullRebuild) {
+                $this.Logger.Info("Complete rebuild successful: $outputPath")
+            }
+            else {
+                $this.Logger.Info("Additive update complete: $outputPath")
+            }
         }
         else {
-            $this.Logger.Warning("No changes to process during additive update")
+            $this.Logger.Warning("No changes to process during update")
         }
         
         # Update snapshot after successful processing

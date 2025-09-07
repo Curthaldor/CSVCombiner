@@ -100,17 +100,12 @@ class CSVCombinerConfig {
             return $false
         }
         
-        # Validate or create output directory
+        # Check output directory but don't auto-create it
         $outputDir = $config.General.OutputFolder
         if ($outputDir -and !(Test-Path $outputDir)) {
-            try {
-                New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
-                Write-Log "Created output directory: $outputDir" "INFO"
-            }
-            catch {
-                Write-Log "Cannot create output directory: $outputDir - $($_.Exception.Message)" "ERROR"
-                return $false
-            }
+            Write-Log "Output directory does not exist: $outputDir (will queue data until directory is created)" "WARNING"
+        } elseif ($outputDir -and (Test-Path $outputDir)) {
+            Write-Log "Output directory validated: $outputDir" "INFO"
         }
         
         return $true
@@ -151,5 +146,13 @@ class CSVCombinerConfig {
     
     [string]GetLogFile() {
         return $this.Config.General.LogFile
+    }
+    
+    [bool]GetStartMinimized() {
+        $value = $this.Config.General.StartMinimized
+        if ($value -eq $null -or $value -eq "") {
+            return $false
+        }
+        return $value.ToLower() -eq "true"
     }
 }

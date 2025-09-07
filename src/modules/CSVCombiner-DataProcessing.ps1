@@ -13,23 +13,39 @@ function Merge-ColumnSchemas {
     
     $allColumns = [System.Collections.Generic.List[string]]::new()
     
-    # Always add SourceFile column first for file tracking
-    $allColumns.Add("SourceFile")
-    
-    # Add existing columns (excluding system properties)
-    foreach ($columnName in $ExistingColumns) {
-        if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and 
-            $columnName -ne "SourceFile" -and
-            -not $allColumns.Contains($columnName)) {
-            $allColumns.Add($columnName)
+    # If no existing columns, start with new columns in their original order and add SourceFile first
+    if ($ExistingColumns.Count -eq 0) {
+        # Always add SourceFile column first for file tracking
+        $allColumns.Add("SourceFile")
+        
+        # Add new columns in their original order
+        foreach ($columnName in $NewColumns) {
+            if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and
+                $columnName -ne "SourceFile" -and
+                -not $allColumns.Contains($columnName)) {
+                $allColumns.Add($columnName)
+            }
         }
     }
-    
-    # Add new columns
-    foreach ($columnName in $NewColumns) {
-        if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and
-            -not $allColumns.Contains($columnName)) {
-            $allColumns.Add($columnName)
+    else {
+        # Always add SourceFile column first for file tracking
+        $allColumns.Add("SourceFile")
+        
+        # Add existing columns (excluding system properties)
+        foreach ($columnName in $ExistingColumns) {
+            if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and 
+                $columnName -ne "SourceFile" -and
+                -not $allColumns.Contains($columnName)) {
+                $allColumns.Add($columnName)
+            }
+        }
+        
+        # Add new columns
+        foreach ($columnName in $NewColumns) {
+            if ($columnName -notmatch '^(PSObject|PSTypeNames|NullData)' -and
+                -not $allColumns.Contains($columnName)) {
+                $allColumns.Add($columnName)
+            }
         }
     }
     

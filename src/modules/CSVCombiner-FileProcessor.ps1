@@ -7,10 +7,14 @@
 class CSVFileProcessor {
     [object]$Config
     [object]$Logger
+    [System.Collections.Generic.List[object]]$PendingDataQueue
+    [hashtable]$QueuedProcessedFiles
     
     CSVFileProcessor([object]$config, [object]$logger) {
         $this.Config = $config
         $this.Logger = $logger
+        $this.PendingDataQueue = [System.Collections.Generic.List[object]]::new()
+        $this.QueuedProcessedFiles = @{}
     }
     
     # Main entry point for processing CSV files
@@ -34,15 +38,15 @@ class CSVFileProcessor {
             $this.HandleModifiedFiles($outputPath, $changes, $currentState)
             
             # Process new data
-            $newData = $this.ProcessInputFiles($filesToProcess)
+            $processedData = $this.ProcessInputFiles($filesToProcess)
             
-            if ($newData.Count -eq 0) {
+            if ($processedData.Rows.Count -eq 0) {
                 $this.Logger.Info("No new data to process")
                 return $outputPath
             }
             
             # Merge and save
-            $success = $this.MergeAndSaveData($outputPath, $newData, $currentState)
+            $success = $this.MergeAndSaveData($outputPath, $processedData, $currentState)
             
             if ($success) { return $outputPath } else { return $null }
         }
@@ -153,17 +157,19 @@ class CSVFileProcessor {
         }
     }
     
-    [System.Collections.ArrayList]ProcessInputFiles([System.Collections.ArrayList]$filesToProcess) {
-        $dataColumns = [System.Collections.Generic.HashSet[string]]::new()
+    [hashtable]ProcessInputFiles([System.Collections.ArrayList]$filesToProcess) {
+        $dataColumns = [System.Collections.Generic.List[string]]::new()  # Use List to preserve order
         $newDataRows = [System.Collections.ArrayList]::new()
         
         foreach ($csvFile in $filesToProcess) {
             $fileData = $this.ProcessSingleFile($csvFile)
             
             if ($fileData.Rows.Count -gt 0) {
-                # Collect columns
+                # Collect columns in order from first file, then add any new ones from subsequent files
                 foreach ($column in $fileData.Columns) {
-                    [void]$dataColumns.Add($column)
+                    if (-not $dataColumns.Contains($column)) {
+                        $dataColumns.Add($column)
+                    }
                 }
                 
                 # Add rows with timestamp
@@ -177,7 +183,12 @@ class CSVFileProcessor {
         }
         
         $this.Logger.Info("Collected $($newDataRows.Count) rows from $($dataColumns.Count) unique columns")
-        return $newDataRows
+        
+        # Return both data and columns
+        return @{
+            Rows = $newDataRows
+            Columns = [string[]]$dataColumns
+        }
     }
     
     [hashtable]ProcessSingleFile([System.IO.FileInfo]$csvFile) {
@@ -203,12 +214,12 @@ class CSVFileProcessor {
             }
             
             # Process CSV with duplicate column handling
-            $csvData = $this.ImportCSVWithUniqueHeaders($csvFile.FullName)
+            $csvResult = $this.ImportCSVWithUniqueHeaders($csvFile.FullName)
             
-            if ($csvData.Count -gt 0) {
-                $result.Rows = $csvData
-                $result.Columns = $csvData[0].PSObject.Properties.Name
-                $this.Logger.Debug("Successfully processed $($csvData.Count) rows with $($result.Columns.Count) columns")
+            if ($csvResult.Data.Count -gt 0) {
+                $result.Rows = $csvResult.Data
+                $result.Columns = $csvResult.ColumnOrder  # Use preserved original column order
+                $this.Logger.Debug("Successfully processed $($csvResult.Data.Count) rows with $($result.Columns.Count) columns")
             }
         }
         catch {
@@ -218,11 +229,18 @@ class CSVFileProcessor {
         return $result
     }
     
-    [object[]]ImportCSVWithUniqueHeaders([string]$filePath) {
+    [hashtable]ImportCSVWithUniqueHeaders([string]$filePath) {
+        # Check if file exists
+        if (-not (Test-Path $filePath)) {
+            Write-Log "File does not exist: $filePath" "WARNING"
+            return @{ Headers = @(); Data = @() }
+        }
+        
         $lines = Get-Content -Path $filePath
         
         if ($lines.Count -eq 0 -or [string]::IsNullOrWhiteSpace($lines[0])) {
-            throw "File has no header line"
+            Write-Log "File has no header line: $filePath" "WARNING"
+            return @{ Headers = @(); Data = @() }
         }
         
         # Handle duplicate column names
@@ -242,7 +260,11 @@ class CSVFileProcessor {
         $tempFile = [System.IO.Path]::GetTempFileName() + ".csv"
         try {
             $tempCsvContent | Out-File -FilePath $tempFile -Encoding UTF8
-            return Import-Csv -Path $tempFile
+            $csvData = Import-Csv -Path $tempFile
+            return @{
+                Data = $csvData
+                ColumnOrder = $uniqueColumnNames
+            }
         }
         finally {
             if (Test-Path $tempFile) {
@@ -271,22 +293,22 @@ class CSVFileProcessor {
         return $uniqueNames
     }
     
-    [bool]MergeAndSaveData([string]$outputPath, [System.Collections.ArrayList]$newDataRows, [hashtable]$currentState) {
+    [bool]MergeAndSaveData([string]$outputPath, [hashtable]$processedData, [hashtable]$currentState) {
         try {
-            # Create unified schema
-            $newColumns = [string[]]($newDataRows[0].Row.PSObject.Properties.Name | Sort-Object)
+            # Create unified schema using preserved column order
+            $newColumns = [string[]]($processedData.Columns)  # Use Columns from processed data
             $allColumns = Merge-ColumnSchemas -ExistingColumns $currentState.Schema -NewColumns $newColumns
             
             $this.Logger.Info("Unified schema contains $($allColumns.Count) columns")
             
             # Convert to unified format
-            $unifiedData = $this.ConvertToUnifiedFormat($newDataRows, $allColumns)
+            $unifiedData = $this.ConvertToUnifiedFormat($processedData.Rows, $allColumns)
             
             # Remove duplicates
             $excludeColumns = @("SourceFile")
             $unifiedData = Remove-DuplicateRows -Data $unifiedData -ExcludeColumns $excludeColumns
             
-            $this.Logger.Info("Processed $($unifiedData.Count) unique rows (removed $($newDataRows.Count - $unifiedData.Count) duplicates)")
+            $this.Logger.Info("Processed $($unifiedData.Count) unique rows (removed $($processedData.Rows.Count - $unifiedData.Count) duplicates)")
             
             # Save to file
             $createNewFile = (-not $currentState.FileExists) -or ($currentState.Schema.Count -eq 0)

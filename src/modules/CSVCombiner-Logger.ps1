@@ -17,7 +17,17 @@ function Write-Log {
     Write-Host $logMessage
     
     if ($LogFile) {
-        Add-Content -Path $LogFile -Value $logMessage -ErrorAction SilentlyContinue
+        try {
+            # Create directory if it doesn't exist
+            $logDir = Split-Path $LogFile -Parent
+            if ($logDir -and -not (Test-Path $logDir)) {
+                New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
+            }
+            Add-Content -Path $LogFile -Value $logMessage -ErrorAction SilentlyContinue
+        }
+        catch {
+            # Silently continue on file write errors
+        }
     }
 }
 
@@ -59,10 +69,15 @@ class CSVCombinerLogger {
         # Write to file if configured
         if ($this.LogFile) {
             try {
+                # Create directory if it doesn't exist
+                $logDir = Split-Path $this.LogFile -Parent
+                if ($logDir -and -not (Test-Path $logDir)) {
+                    New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
+                }
                 Add-Content -Path $this.LogFile -Value $logMessage -ErrorAction SilentlyContinue
             }
             catch {
-                Write-Host "Failed to write to log file: $($_.Exception.Message)" -ForegroundColor Red
+                # Silently handle file write errors
             }
         }
     }

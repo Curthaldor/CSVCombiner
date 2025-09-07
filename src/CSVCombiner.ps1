@@ -1,9 +1,9 @@
 # ==============================================================================
-# CSV Combiner Script v2.4 - Modular Architecture with Improved Organization
+# CSV Combiner Script v3.0 - Production-Ready with Comprehensive Testing
 # ==============================================================================
 # Author: Curt Haldorson, GitHub Copilot Assistant
 # Created: August 2025
-# Updated: September 2025 - Refactored for better organization and maintainability
+# Updated: September 2025 - v3.0: Added modular testing, StartMinimized feature, enhanced reliability
 # Purpose: Monitors a folder for CSV files and combines them into a master CSV
 # 
 # FEATURES:

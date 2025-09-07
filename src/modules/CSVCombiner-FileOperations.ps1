@@ -99,6 +99,14 @@ function Compare-FileSnapshots {
         HasChanges = $false
     }
     
+    # Initialize empty snapshots if null
+    if ($null -eq $OldSnapshot -or $null -eq $OldSnapshot.Files) {
+        $OldSnapshot = @{ Files = @{} }
+    }
+    if ($null -eq $NewSnapshot -or $null -eq $NewSnapshot.Files) {
+        $NewSnapshot = @{ Files = @{} }
+    }
+    
     # Check for new files
     foreach ($fileName in $NewSnapshot.Files.Keys) {
         if (-not $OldSnapshot.Files.ContainsKey($fileName)) {
