@@ -1,5 +1,5 @@
 # ==============================================================================
-# CSV Combiner Monitoring Service Module v2.4
+# CSV Combiner Monitoring Service Module v3.0
 # ==============================================================================
 # Purpose: File monitoring and change detection service
 # ==============================================================================

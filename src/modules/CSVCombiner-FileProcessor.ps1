@@ -1,5 +1,5 @@
 # ==============================================================================
-# CSV Combiner File Processing Module v2.4
+# CSV Combiner File Processing Module v3.0
 # ==============================================================================
 # Purpose: Specialized CSV file processing and merging operations
 # ==============================================================================
@@ -7,14 +7,10 @@
 class CSVFileProcessor {
     [object]$Config
     [object]$Logger
-    [System.Collections.Generic.List[object]]$PendingDataQueue
-    [hashtable]$QueuedProcessedFiles
     
     CSVFileProcessor([object]$config, [object]$logger) {
         $this.Config = $config
         $this.Logger = $logger
-        $this.PendingDataQueue = [System.Collections.Generic.List[object]]::new()
-        $this.QueuedProcessedFiles = @{}
     }
     
     # Main entry point for processing CSV files

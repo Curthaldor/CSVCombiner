@@ -1,5 +1,5 @@
 # ==============================================================================
-# CSV Combiner Data Processing Module v2.4
+# CSV Combiner Data Processing Module v3.0
 # ==============================================================================
 # Purpose: CSV data manipulation, schema merging, and file processing functions
 # ==============================================================================

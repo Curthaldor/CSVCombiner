@@ -1,16 +1,6 @@
-# CSV Combiner v3.0 - Production-Ready Automated CSV File Combination Tool
-
-**🎉 NEW in v3.0: Comprehensive test suite (97 tests, 100% pass rate) and StartMinimized feature!**
+# CSV Combiner v3.0 - Advanced Automated CSV File Combination Tool with StartMinimized Feature
 
 This tool automatically monitors a folder for CSV files and combines them into a master CSV file using additive processing, perfect for consolidating data files into a OneDrive location for remote access.
-
-## 🆕 v3.0 Highlights
-
-- **✅ 97 comprehensive tests** with 100% pass rate
-- **🪟 StartMinimized feature** - Run in background on startup
-- **🏗️ Modular test architecture** for long-term maintainability
-- **📊 Performance testing** validates scalability
-- **🔧 Enhanced reliability** through comprehensive testing
 
 ## Key Features
 
@@ -20,17 +10,15 @@ This tool automatically monitors a folder for CSV files and combines them into a
 - **Configurable Metadata**: Optional source file name and creation time columns
 - **High-Performance Processing**: Fast streaming append without data filtering
 - **Optional Filename Validation**: Enforces 14-digit timestamp format (YYYYMMDDHHMMSS.csv)
-- **StartMinimized Option**: Configure script to start with minimized window (v3.0)
+- **Advanced Backup System**: Numbered backups with configurable retention
 - **File Stability Checks**: Prevents processing of incomplete files
 - **Simple Retry Logic**: Waits for next iteration when files are in use
 - **PID-Based Process Management**: Reliable start/stop operations
 - **No Admin Required**: Runs on standard Windows 11 without special permissions
-- **Comprehensive Testing**: 97 tests covering all functionality and edge cases
 
 ## Files Included
 
-- `src/CSVCombiner.ps1` - Main PowerShell script (v3.0 with enhanced features)
-- `src/modules/` - Modular components for maintainability
+- `CSVCombiner.ps1` - Main PowerShell script (v3.0 with StartMinimized feature and enhanced performance)
 - `CSVCombiner.ini` - Configuration file with filename validation options
 - `StartCSVCombiner.bat` - Batch file for easy startup with PID management
 - `StopCSVCombiner.bat` - Batch file to safely stop the running process
@@ -96,45 +84,6 @@ Edit `CSVCombiner.ini` to customize behavior:
 
 ### Optional Settings
 - `LogFile`: Path for log file (leave empty to disable console-only logging)
-- `StartMinimized`: Start PowerShell window minimized (true/false) - New in v3.0
-
-## 🧪 Testing (New in v3.0)
-
-CSV Combiner v3.0 includes a comprehensive test suite with **97 tests** covering all functionality:
-
-### Running Tests
-
-```powershell
-# Run all 97 tests
-.\tests\RunAllTests.ps1
-
-# Run quick core tests only
-.\tests\RunAllTests.ps1 -Quick
-
-# Run specific module tests
-.\tests\RunAllTests.ps1 -TestModule Config
-.\tests\RunAllTests.ps1 -TestModule Performance
-
-# Run by category
-.\tests\RunAllTests.ps1 -Unit          # Unit tests (75 tests)
-.\tests\RunAllTests.ps1 -Integration   # Integration tests (10 tests)
-.\tests\RunAllTests.ps1 -Performance   # Performance tests (9 tests)
-```
-
-### Test Coverage
-
-The test suite validates:
-
-- **Configuration Management** (11 tests) - Config loading, validation, defaults
-- **Data Processing** (15 tests) - CSV parsing, schema merging, deduplication
-- **File Operations** (18 tests) - File monitoring, snapshots, change detection
-- **Logger** (13 tests) - Logging levels, file output, error handling
-- **File Processor** (10 tests) - CSV processing classes and workflows
-- **Monitoring Service** (11 tests) - File change detection, empty directories
-- **Performance** (9 tests) - Memory efficiency, scalability, large datasets
-- **Integration** (10 tests) - End-to-end workflows and real-world scenarios
-
-All tests achieve **100% pass rate** ensuring reliability and stability.
 
 ## PowerShell Execution Policy
 
@@ -167,7 +116,7 @@ If you get execution policy errors:
 - Invalid examples: "data.csv", "2025-08-25.csv", "20250825.csv" (too short)
 
 ### Data Processing Notes
-- **Fast Processing**: v2.3 optimized for maximum throughput and performance
+- **Fast Processing**: v3.0 optimized for maximum throughput and performance with StartMinimized feature
 - All rows from all input files are preserved in the output
 - Data is efficiently appended with minimal processing overhead
 - For specialized data filtering, use external tools or previous versions
@@ -261,7 +210,19 @@ This script only uses built-in Windows PowerShell features and does not require:
 
 ## Version History
 
-### v2.3 (Current)
+### v3.0 (Current)
+- **New Feature**: StartMinimized option for background operation
+- **Enhanced**: Comprehensive 97-test modular test suite (100% pass rate)
+- **Improved**: Enhanced batch file launchers with configuration reading
+- **Refined**: Modular architecture with improved organization
+- **Added**: Production-ready deployment with trusted execution options
+
+### v2.4
+- **Refactored**: Modular architecture with improved organization
+- **Enhanced**: Better maintainability and code separation
+- **Improved**: Module-based design for easier testing and development
+
+### v2.3
 - **Enhanced**: Optional filename format validation (14-digit timestamp format)
 - **Optimized**: High-performance streaming processing
 - **Improved**: Better error messages and validation feedback

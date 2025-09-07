@@ -1,9 +1,9 @@
 # ==============================================================================
-# CSV Combiner Script v3.0 - Production-Ready with Comprehensive Testing
+# CSV Combiner Script v3.0 - Production Ready with StartMinimized Feature
 # ==============================================================================
 # Author: Curt Haldorson, GitHub Copilot Assistant
 # Created: August 2025
-# Updated: September 2025 - v3.0: Added modular testing, StartMinimized feature, enhanced reliability
+# Updated: September 2025 - Added StartMinimized feature and comprehensive test suite
 # Purpose: Monitors a folder for CSV files and combines them into a master CSV
 # 
 # FEATURES:

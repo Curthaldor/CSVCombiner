@@ -1,5 +1,5 @@
 # ==============================================================================
-# CSV Combiner File Operations Module v2.4
+# CSV Combiner File Operations Module v3.0
 # ==============================================================================
 # Purpose: File system operations, monitoring, and validation functions
 # ==============================================================================

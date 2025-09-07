@@ -1,5 +1,5 @@
 # ==============================================================================
-# CSV Combiner Configuration Module v2.4
+# CSV Combiner Configuration Module v3.0
 # ==============================================================================
 # Purpose: Configuration management and validation
 # ==============================================================================
@@ -100,12 +100,17 @@ class CSVCombinerConfig {
             return $false
         }
         
-        # Check output directory but don't auto-create it
+        # Validate or create output directory
         $outputDir = $config.General.OutputFolder
         if ($outputDir -and !(Test-Path $outputDir)) {
-            Write-Log "Output directory does not exist: $outputDir (will queue data until directory is created)" "WARNING"
-        } elseif ($outputDir -and (Test-Path $outputDir)) {
-            Write-Log "Output directory validated: $outputDir" "INFO"
+            try {
+                New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
+                Write-Log "Created output directory: $outputDir" "INFO"
+            }
+            catch {
+                Write-Log "Cannot create output directory: $outputDir - $($_.Exception.Message)" "ERROR"
+                return $false
+            }
         }
         
         return $true
