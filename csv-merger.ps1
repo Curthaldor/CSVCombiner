@@ -4,19 +4,7 @@
 # Supports single execution or repeated execution based on IntervalSeconds setting
 
 param(
-    [string]$SettingsFile     if ($newFiles.Count -eq 0) {
-        Write-Host "No new files to process - all input files have already been merged" -ForegroundColor Yellow
-        return $true
-    }
-    
-    if ($newFiles.Count -le 5) {
-        Write-Host "Found $($newFiles.Count) new file(s) to process:" -ForegroundColor Green
-        foreach ($file in $newFiles) {
-            Write-Host "  - $($file.Name)" -ForegroundColor Green
-        }
-    } else {
-        Write-Host "Found $($newFiles.Count) new files to process" -ForegroundColor Green
-    }ings.ini",
+    [string]$SettingsFile = ".\settings.ini",
     [string]$MasterFileName = ""
 )
 
@@ -305,9 +293,13 @@ function Invoke-CsvMerge {
         return $true
     }
     
-    Write-Host "Found $($newFiles.Count) new file(s) to process:" -ForegroundColor Green
-    foreach ($file in $newFiles) {
-        Write-Host "  - $file.Name" -ForegroundColor Green
+    if ($newFiles.Count -le 5) {
+        Write-Host "Found $($newFiles.Count) new file(s) to process:" -ForegroundColor Green
+        foreach ($file in $newFiles) {
+            Write-Host "  - $($file.Name)" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Found $($newFiles.Count) new files to process" -ForegroundColor Green
     }
 
     # Determine if we need to write header (only if output file doesn't exist)
