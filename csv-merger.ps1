@@ -190,6 +190,64 @@ function Merge-CsvFile {
     }
 }
 
+# Function to get list of already processed files from output file
+function Get-ProcessedFiles {
+    param(
+        [string]$OutputPath
+    )
+    
+    $processedFiles = @()
+    
+    if (-not (Test-Path $OutputPath)) {
+        Write-Host "No existing output file found - will process all input files" -ForegroundColor Yellow
+        return $processedFiles
+    }
+    
+    try {
+        Write-Host "Checking existing output file for previously processed files..." -ForegroundColor Cyan
+        $reader = [System.IO.StreamReader]::new($OutputPath)
+        
+        # Skip header line
+        if (-not $reader.EndOfStream) {
+            $reader.ReadLine() | Out-Null
+        }
+        
+        # Read through file and collect unique source files
+        $uniqueFiles = @{}
+        while (-not $reader.EndOfStream) {
+            $line = $reader.ReadLine()
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                # Extract first column (source file name)
+                $firstCommaIndex = $line.IndexOf(',')
+                if ($firstCommaIndex -gt 0) {
+                    $sourceFile = $line.Substring(0, $firstCommaIndex)
+                    $uniqueFiles[$sourceFile] = $true
+                }
+            }
+        }
+        
+        $reader.Close()
+        $processedFiles = $uniqueFiles.Keys
+        
+        if ($processedFiles.Count -gt 0) {
+            Write-Host "Found $($processedFiles.Count) previously processed file(s):" -ForegroundColor Gray
+            foreach ($file in $processedFiles | Sort-Object) {
+                Write-Host "  - $file" -ForegroundColor Gray
+            }
+        } else {
+            Write-Host "Output file exists but contains no data rows" -ForegroundColor Yellow
+        }
+        
+        return $processedFiles
+    }
+    catch {
+        Write-Host "Warning: Could not read existing output file: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "Will process all input files" -ForegroundColor Yellow
+        if ($reader) { $reader.Close() }
+        return @()
+    }
+}
+
 # Function to perform the CSV merge operation
 function Invoke-CsvMerge {
     param(
@@ -210,33 +268,61 @@ function Invoke-CsvMerge {
         return $false
     }
 
-    Write-Host "Found $($csvFiles.Count) CSV file(s) to process" -ForegroundColor Green
-
+    Write-Host "Found $($csvFiles.Count) CSV file(s) in input folder" -ForegroundColor Green
+    
     # Prepare output file path
     $outputPath = Join-Path $OutputFolder $MasterFileName
+    
+    # Check for previously processed files
+    $processedFiles = Get-ProcessedFiles -OutputPath $outputPath
+    
+    # Filter out already processed files
+    $newFiles = @()
+    foreach ($file in $csvFiles) {
+        if ($file.Name -notin $processedFiles) {
+            $newFiles += $file
+        }
+    }
+    
+    if ($newFiles.Count -eq 0) {
+        Write-Host "No new files to process - all input files have already been merged" -ForegroundColor Yellow
+        return $true
+    }
+    
+    Write-Host "Found $($newFiles.Count) new file(s) to process:" -ForegroundColor Green
+    foreach ($file in $newFiles) {
+        Write-Host "  - $file.Name" -ForegroundColor Green
+    }
 
-    # Open output file for writing (overwrites existing file automatically)
+    # Determine if we need to write header (only if output file doesn't exist)
+    $outputExists = Test-Path $outputPath
+    $writeHeader = -not $outputExists
+    
+    # Open output file for writing (append mode if file exists, create if not)
     try {
-        $writer = [System.IO.StreamWriter]::new($outputPath, $false, [System.Text.Encoding]::UTF8)
-        Write-Host "Created/overwriting master file: $outputPath" -ForegroundColor Yellow
+        $writer = [System.IO.StreamWriter]::new($outputPath, $outputExists, [System.Text.Encoding]::UTF8)
+        if ($outputExists) {
+            Write-Host "Appending to existing master file: $outputPath" -ForegroundColor Yellow
+        } else {
+            Write-Host "Creating new master file: $outputPath" -ForegroundColor Yellow
+        }
     }
     catch {
-        Write-Host "Error: Cannot create output file: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Error: Cannot create/open output file: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host "This may be because the file is open in another application." -ForegroundColor Yellow
         return $false
     }
 
-    # Process each CSV file
+    # Process each new CSV file
     $totalRows = 0
     $fileCount = 0
-    $headerWritten = $false
 
     try {
-        foreach ($file in $csvFiles) {
+        foreach ($file in $newFiles) {
             $fileCount++
-            $isFirstFile = ($fileCount -eq 1)
+            $isFirstFile = $writeHeader -and ($fileCount -eq 1)
             
-            Write-Host "`nProcessing file $fileCount of $($csvFiles.Count):" -ForegroundColor Blue
+            Write-Host "`nProcessing file $fileCount of $($newFiles.Count):" -ForegroundColor Blue
             
             $rowsAdded = Merge-CsvFile -FilePath $file.FullName -Writer $writer -IsFirstFile $isFirstFile
             $totalRows += $rowsAdded
@@ -252,14 +338,18 @@ function Invoke-CsvMerge {
 
     # Summary
     Write-Host "`n--- Processing Complete ---" -ForegroundColor Green
-    Write-Host "Files processed: $fileCount" -ForegroundColor White
-    Write-Host "Total data rows merged: $totalRows" -ForegroundColor White
-    Write-Host "Master file created: $outputPath" -ForegroundColor White
+    Write-Host "New files processed: $fileCount" -ForegroundColor White
+    Write-Host "Total data rows added: $totalRows" -ForegroundColor White
+    Write-Host "Master file: $outputPath" -ForegroundColor White
 
     # Display master file info
     if (Test-Path $outputPath) {
         $fileSize = [math]::Round((Get-Item $outputPath).Length / 1KB, 2)
         Write-Host "Master file size: $fileSize KB" -ForegroundColor Gray
+        
+        # Show total processed files count
+        $allProcessedFiles = Get-ProcessedFiles -OutputPath $outputPath
+        Write-Host "Total files in master file: $($allProcessedFiles.Count)" -ForegroundColor Gray
     }
     
     return $true

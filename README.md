@@ -6,6 +6,8 @@ A PowerShell script for efficiently merging multiple CSV files into a single mas
 
 - **Memory Efficient**: Uses streaming approach to process large files without loading everything into memory
 - **Source Tracking**: Automatically adds a `SourceFile` column to track which file each row originated from
+- **Smart Processing**: Checks existing output file to only process new input files, avoiding duplicates
+- **Incremental Merging**: Appends only new data to existing master files instead of reprocessing everything
 - **Flexible Execution**: Run once or continuously at specified intervals
 - **Configuration-Based**: Uses INI file for easy configuration management
 - **Error Resilient**: Continues processing in continuous mode even when temporary file conflicts occur
@@ -49,7 +51,15 @@ IntervalSeconds=0  # 0 = run once, >0 = repeat every N seconds
 ### Continuous Execution
 Set `IntervalSeconds=30` in settings.ini to run every 30 seconds, or any desired interval.
 
-## Requirements
+## How It Works
+
+### Smart Processing Logic
+1. **First Run**: If no output file exists, processes all input files and creates new master file
+2. **Subsequent Runs**: Checks the `SourceFile` column in existing output to identify already processed files
+3. **Incremental Updates**: Only processes new input files that haven't been merged yet
+4. **Append Mode**: New data is appended to existing master file, preserving previous results
+
+This approach ensures efficiency and prevents duplicate data even in continuous execution mode.
 
 - PowerShell 5.1 or later
 - Read access to input folder
@@ -73,4 +83,4 @@ The merged CSV will have the following structure:
 
 ## Version
 
-Version 2.0 - Complete rewrite with streaming architecture and enhanced error handling
+Version 1.1-b - Added smart processing to avoid duplicate processing and support incremental merging
