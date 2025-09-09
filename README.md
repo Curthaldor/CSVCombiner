@@ -83,4 +83,4 @@ The merged CSV will have the following structure:
 
 ## Version
 
-Version 1.1-b - Added smart processing to avoid duplicate processing and support incremental merging
+Version 1.1.1-b - Added smart processing to avoid duplicate processing and support incremental merging. Improved terminal output for large file lists.

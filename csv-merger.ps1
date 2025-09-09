@@ -4,7 +4,19 @@
 # Supports single execution or repeated execution based on IntervalSeconds setting
 
 param(
-    [string]$SettingsFile = ".\settings.ini",
+    [string]$SettingsFile     if ($newFiles.Count -eq 0) {
+        Write-Host "No new files to process - all input files have already been merged" -ForegroundColor Yellow
+        return $true
+    }
+    
+    if ($newFiles.Count -le 5) {
+        Write-Host "Found $($newFiles.Count) new file(s) to process:" -ForegroundColor Green
+        foreach ($file in $newFiles) {
+            Write-Host "  - $($file.Name)" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Found $($newFiles.Count) new files to process" -ForegroundColor Green
+    }ings.ini",
     [string]$MasterFileName = ""
 )
 
@@ -230,9 +242,13 @@ function Get-ProcessedFiles {
         $processedFiles = $uniqueFiles.Keys
         
         if ($processedFiles.Count -gt 0) {
-            Write-Host "Found $($processedFiles.Count) previously processed file(s):" -ForegroundColor Gray
-            foreach ($file in $processedFiles | Sort-Object) {
-                Write-Host "  - $file" -ForegroundColor Gray
+            if ($processedFiles.Count -le 5) {
+                Write-Host "Found $($processedFiles.Count) previously processed file(s):" -ForegroundColor Gray
+                foreach ($file in $processedFiles | Sort-Object) {
+                    Write-Host "  - $file" -ForegroundColor Gray
+                }
+            } else {
+                Write-Host "Found $($processedFiles.Count) previously processed files" -ForegroundColor Gray
             }
         } else {
             Write-Host "Output file exists but contains no data rows" -ForegroundColor Yellow
