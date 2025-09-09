@@ -1,0 +1,23 @@
+# Ignore output files
+output/*.csv
+!output/.gitkeep
+
+# Ignore temporary PowerShell files
+*.tmp
+*.temp
+
+# Ignore system files
+Thumbs.db
+.DS_Store
+
+# Ignore IDE files
+.vscode/
+.idea/
+
+# Ignore backup files
+*.bak
+*.backup
+*~
+
+# Ignore log files
+*.log
