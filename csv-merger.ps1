@@ -5,7 +5,9 @@
 
 param(
     [string]$SettingsFile = ".\settings.ini",
-    [string]$MasterFileName = ""
+    [string]$MasterFileName = "",
+    [string]$InputFolder = "",
+    [switch]$GenerateDailySummary
 )
 
 # Function to read settings from INI file
@@ -61,7 +63,7 @@ function Get-IniSettings {
 
 # Function to validate INI settings and provide defaults
 function Test-IniSettings {
-    param([hashtable]$Settings, [string]$MasterFileNameParam)
+    param([hashtable]$Settings, [string]$MasterFileNameParam, [string]$InputFolderParam)
     
     $result = @{
         InputFolder = $Settings["Paths.InputFolder"]
@@ -72,9 +74,15 @@ function Test-IniSettings {
         ErrorMessages = @()
     }
     
+    # Handle input folder (parameter overrides INI setting)
+    if ($InputFolderParam -ne "") {
+        Write-Host "Overriding InputFolder from command line: $InputFolderParam" -ForegroundColor Green
+        $result.InputFolder = $InputFolderParam
+    }
+    
     # Validate required paths
     if (-not $result.InputFolder) {
-        $result.ErrorMessages += "InputFolder not found in settings file under [Paths] section"
+        $result.ErrorMessages += "InputFolder not found in settings file under [Paths] section and not provided as parameter"
         $result.IsValid = $false
     }
     
@@ -85,6 +93,7 @@ function Test-IniSettings {
     
     # Handle master file name (parameter overrides INI setting)
     if ($MasterFileNameParam -ne "") {
+        Write-Host "Overriding MasterFileName from command line: $MasterFileNameParam" -ForegroundColor Green
         $result.MasterFileName = $MasterFileNameParam
     } else {
         $result.MasterFileName = $Settings["Output.MasterFileName"]
@@ -110,7 +119,7 @@ function Test-IniSettings {
 $settings = Get-IniSettings -FilePath $SettingsFile
 
 # Validate settings and get processed values
-$config = Test-IniSettings -Settings $settings -MasterFileNameParam $MasterFileName
+$config = Test-IniSettings -Settings $settings -MasterFileNameParam $MasterFileName -InputFolderParam $InputFolder
 
 # Check if validation passed
 if (-not $config.IsValid) {
@@ -136,6 +145,47 @@ function Test-FolderExists {
     }
 }
 
+# Function to check if a row should be filtered out
+function Test-RowShouldBeFiltered {
+    param([string]$Line, [array]$HeaderColumns)
+    
+    # Split the line into columns
+    $columns = $Line -split ','
+    
+    # Find column indices for Error Code and PassFlag
+    $errorCodeIndex = -1
+    $passFlagIndex = -1
+    
+    for ($i = 0; $i -lt $HeaderColumns.Length; $i++) {
+        if ($HeaderColumns[$i] -eq "Error Code") {
+            $errorCodeIndex = $i
+        }
+        elseif ($HeaderColumns[$i] -eq "PassFlag") {
+            $passFlagIndex = $i
+        }
+    }
+    
+    # If we can't find the columns, don't filter (include the row)
+    if ($errorCodeIndex -eq -1 -or $passFlagIndex -eq -1) {
+        return $false
+    }
+    
+    # Check if both Error Code and PassFlag are empty
+    $errorCodeValue = if ($errorCodeIndex -lt $columns.Length) { $columns[$errorCodeIndex].Trim() } else { "" }
+    $passFlagValue = if ($passFlagIndex -lt $columns.Length) { $columns[$passFlagIndex].Trim() } else { "" }
+    
+    # Filter out (return true) if both are empty
+    return ([string]::IsNullOrWhiteSpace($errorCodeValue) -and [string]::IsNullOrWhiteSpace($passFlagValue))
+}
+
+# Function to validate if filename matches YYYYMMDDHHMMSS.csv format
+function Test-ValidCsvFileName {
+    param([string]$FileName)
+    
+    # Check if filename matches pattern: 14 digits followed by .csv
+    return ($FileName -match '^\d{14}\.csv$')
+}
+
 # Function to process a single CSV file
 function Merge-CsvFile {
     param(
@@ -151,11 +201,14 @@ function Merge-CsvFile {
         # Open input file for reading
         $reader = [System.IO.StreamReader]::new($FilePath)
         $lineCount = 0
+        $filteredCount = 0
         $headerLine = $null
+        $headerColumns = @()
         
         # Read first line (header)
         if (-not $reader.EndOfStream) {
             $headerLine = $reader.ReadLine()
+            $headerColumns = $headerLine -split ','
             $lineCount++
             
             # Always write header (from first file only for proper CSV format)
@@ -170,6 +223,12 @@ function Merge-CsvFile {
         while (-not $reader.EndOfStream) {
             $line = $reader.ReadLine()
             if (-not [string]::IsNullOrWhiteSpace($line)) {
+                # Check if this row should be filtered out
+                if (Test-RowShouldBeFiltered -Line $line -HeaderColumns $headerColumns) {
+                    $filteredCount++
+                    continue
+                }
+                
                 # Add source file name as the first column
                 $modifiedLine = "$fileName,$line"
                 $Writer.WriteLine($modifiedLine)
@@ -179,7 +238,11 @@ function Merge-CsvFile {
         
         $reader.Close()
         $dataLines = $lineCount - 1  # Subtract header line
-        Write-Host "  Added $dataLines data rows" -ForegroundColor Gray
+        if ($filteredCount -gt 0) {
+            Write-Host "  Added $dataLines data rows (filtered out $filteredCount rows)" -ForegroundColor Gray
+        } else {
+            Write-Host "  Added $dataLines data rows" -ForegroundColor Gray
+        }
         
         return $dataLines
     }
@@ -265,7 +328,16 @@ function Invoke-CsvMerge {
     Test-FolderExists -Path $OutputFolder -FolderType "Output"
 
     # Get all CSV files from input folder
-    $csvFiles = Get-ChildItem -Path $InputFolder -Filter "*.csv" | Sort-Object Name
+    $allCsvFiles = Get-ChildItem -Path $InputFolder -Filter "*.csv" | Sort-Object Name
+    
+    # Filter files to only include those matching YYYYMMDDHHMMSS.csv format
+    $csvFiles = @()
+    
+    foreach ($file in $allCsvFiles) {
+        if (Test-ValidCsvFileName -FileName $file.Name) {
+            $csvFiles += $file
+        }
+    }
 
     if ($csvFiles.Count -eq 0) {
         Write-Host "No CSV files found in input folder: $InputFolder" -ForegroundColor Red
@@ -360,7 +432,52 @@ function Invoke-CsvMerge {
         Write-Host "Total files in master file: $($allProcessedFiles.Count)" -ForegroundColor Gray
     }
     
+    # Generate daily summary if new files were processed and feature is enabled
+    if ($fileCount -gt 0 -and $GenerateDailySummary) {
+        Invoke-DailySummaryGenerator -OutputPath $outputPath -Silent $true | Out-Null
+    }
+    
     return $true
+}
+
+# Function to run the daily summary generator
+function Invoke-DailySummaryGenerator {
+    param(
+        [string]$OutputPath,
+        [bool]$Silent = $true
+    )
+    
+    # Check if daily summary generator script exists
+    $summaryScript = ".\daily-summary-generator.ps1"
+    if (-not (Test-Path $summaryScript)) {
+        Write-Host "Daily summary generator script not found: $summaryScript" -ForegroundColor Yellow
+        return $false
+    }
+    
+    try {
+        Write-Host "Generating daily summary..." -ForegroundColor Cyan
+        
+        if ($Silent) {
+            # Run silently
+            $result = & $summaryScript -OutputFile $OutputPath -Silent 2>&1
+        } else {
+            # Run with output
+            $result = & $summaryScript -OutputFile $OutputPath 2>&1
+        }
+        
+        # PowerShell scripts don't always set LASTEXITCODE properly, so check for errors in output
+        if ($result -and ($result | Where-Object { $_ -match "error" -or $_ -match "Error" })) {
+            Write-Host "Daily summary generation encountered errors" -ForegroundColor Yellow
+            return $false
+        } else {
+            Write-Host "Daily summary generated successfully" -ForegroundColor Green
+            return $true
+        }
+    }
+    catch {
+        Write-Host "Error running daily summary generator: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
 }
 
 # Main execution
@@ -370,6 +487,7 @@ Write-Host "Input Folder: $InputFolder" -ForegroundColor Yellow
 Write-Host "Output Folder: $OutputFolder" -ForegroundColor Yellow
 Write-Host "Master File: $MasterFileName" -ForegroundColor Yellow
 Write-Host "Execution Interval: $intervalSeconds seconds" -ForegroundColor Yellow
+Write-Host "Daily Summary: $(if ($GenerateDailySummary) { 'Enabled' } else { 'Disabled' })" -ForegroundColor Yellow
 
 if ($intervalSeconds -eq 0) {
     Write-Host "`nRunning CSV merge once..." -ForegroundColor Green

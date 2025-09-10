@@ -7,6 +7,8 @@ A PowerShell script for efficiently merging multiple CSV files into a single mas
 - **Memory Efficient**: Uses streaming approach to process large files without loading everything into memory
 - **Source Tracking**: Automatically adds a `SourceFile` column to track which file each row originated from
 - **Smart Processing**: Checks existing output file to only process new input files, avoiding duplicates
+- **Filename Filtering**: Only processes files matching YYYYMMDDHHMMSS.csv naming convention
+- **Data Filtering**: Automatically filters out rows where both "Error Code" and "PassFlag" columns are empty
 - **Incremental Merging**: Appends only new data to existing master files instead of reprocessing everything
 - **Flexible Execution**: Run once or continuously at specified intervals
 - **Configuration-Based**: Uses INI file for easy configuration management
@@ -55,9 +57,11 @@ Set `IntervalSeconds=30` in settings.ini to run every 30 seconds, or any desired
 
 ### Smart Processing Logic
 1. **First Run**: If no output file exists, processes all input files and creates new master file
-2. **Subsequent Runs**: Checks the `SourceFile` column in existing output to identify already processed files
-3. **Incremental Updates**: Only processes new input files that haven't been merged yet
-4. **Append Mode**: New data is appended to existing master file, preserving previous results
+2. **Filename Validation**: Only processes CSV files matching YYYYMMDDHHMMSS.csv format (e.g., 20250523200303.csv)
+3. **Subsequent Runs**: Checks the `SourceFile` column in existing output to identify already processed files
+4. **Incremental Updates**: Only processes new input files that haven't been merged yet
+5. **Data Filtering**: Filters out rows where both "Error Code" and "PassFlag" columns are empty
+6. **Append Mode**: New data is appended to existing master file, preserving previous results
 
 This approach ensures efficiency and prevents duplicate data even in continuous execution mode.
 
@@ -83,4 +87,4 @@ The merged CSV will have the following structure:
 
 ## Version
 
-Version 1.1.1-b - Added smart processing to avoid duplicate processing and support incremental merging. Improved terminal output for large file lists.
+Version 1.2-b - Added input filename filtering (YYYYMMDDHHMMSS.csv), data filtering system for Error Code and PassFlag columns, improved terminal output, and smart processing for incremental merging
