@@ -1,8 +1,15 @@
-# Ignore output files
-output/*.csv
-!output/.gitkeep
+# CSV data files
+*.csv
 
-# Ignore temporary PowerShell files
+# Output directories and their contents
+output/
+massdata/
+
+# Input data directories
+input/
+sampledata/
+
+# Temporary PowerShell files
 *.tmp
 *.temp
 
