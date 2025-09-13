@@ -253,8 +253,9 @@ function Invoke-FileProcessingAndIntegration {
                 $combinedData += $existingDailyData
                 $combinedData += $processedData
                 
-                # Remove duplicates based on MAC Addr, PCB SN0, PCB SN1, PCB SN2 (keeping newer entries)
-                $keyColumns = @("MAC Addr", "PCB SN0", "PCB SN1", "PCB SN2")
+                # Remove duplicates based on MAC Addr only (keeping newer entries)
+                # Simplified matching as requested: duplicates are defined solely by the `MAC Addr` value.
+                $keyColumns = @("MAC Addr")
                 $deduplicatedData = Remove-CsvDuplicates -CsvData $combinedData -KeyColumns $keyColumns
                 
                 Write-Host "    Combined data: $($combinedData.Count) rows, after deduplication: $($deduplicatedData.Count) rows" -ForegroundColor Gray
@@ -381,6 +382,15 @@ function Invoke-DataTransformations {
             $newRow | Add-Member -NotePropertyName "ChipData2" -NotePropertyValue ""
         }
         
+        # Normalize MAC Addr: remove colons and semicolons and trim whitespace
+        if ($newRow.PSObject.Properties.Name -contains 'MAC Addr') {
+            $macVal = $newRow.'MAC Addr'
+            if (-not [string]::IsNullOrWhiteSpace($macVal)) {
+                $macClean = $macVal -replace ':', '' -replace ';', '' -replace '\s', ''
+                $newRow.'MAC Addr' = $macClean
+            }
+        }
+
         $enhancedData += $newRow
     }
     

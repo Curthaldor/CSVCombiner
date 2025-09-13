@@ -87,4 +87,4 @@ The merged CSV will have the following structure:
 
 ## Version
 
-Version 1.2-b - Added input filename filtering (YYYYMMDDHHMMSS.csv), data filtering system for Error Code and PassFlag columns, improved terminal output, and smart processing for incremental merging
+Version 1.3-b - Minor update: normalize MAC addresses (remove `:` and `;` and whitespace), simplify daily-report deduplication to use `MAC Addr` only, and small bugfixes
