@@ -1,0 +1,80 @@
+Metadata-Version: 2.4
+Name: csv_combiner
+Version: 0.1.0
+Summary: Python port of CSVCombiner PowerShell scripts (streaming CSV merging with dedupe and reports)
+Author: CSVCombiner Migration
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Provides-Extra: test
+Requires-Dist: pytest>=7.0; extra == "test"
+
+# CSV Combiner
+
+A PowerShell script for efficiently merging multiple CSV files into a single master file with source tracking and memory-optimized processing.
+
+## Features
+
+- **Memory Efficient**: Uses streaming approach to process large files without loading everything into memory
+- **Source Tracking**: Automatically adds a `SourceFile` column to track which file each row originated from
+- **Smart Processing**: Checks existing output file to only process new input files, avoiding duplicates
+- **Filename Filtering**: Only processes files matching YYYYMMDDHHMMSS.csv naming convention
+- **Data Filtering**: Automatically filters out rows where both "Error Code" and "PassFlag" columns are empty
+- **Incremental Merging**: Appends only new data to existing master files instead of reprocessing everything
+- **Flexible Execution**: Run once or continuously at specified intervals
+- **Configuration-Based**: Uses INI file for easy configuration management
+- **Error Resilient**: Continues processing in continuous mode even when temporary file conflicts occur
+
+## Quick Start
+
+1. **Configure Settings**: Edit `settings.ini` to specify your input and output folders
+2. **Add CSV Files**: Place your CSV files in the configured input folder
+3. **Run the Script**: Execute `.\csv-merger.ps1` in PowerShell
+
+## Configuration
+
+The script uses `settings.ini` for configuration:
+# csv_combiner (Python port)
+
+This repository contains an initial Python port of the CSVCombiner PowerShell scripts.
+
+Quickstart
+---------
+
+1. Create and activate a virtual environment (Windows PowerShell):
+
+```powershell
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+```
+
+2. Install test dependencies and package in editable mode:
+
+```powershell
+python -m pip install -e .[test]
+```
+
+3. Run the CLI (uses `settings.ini` in repository root by default):
+
+```powershell
+python -m csv_combiner.cli
+```
+
+4. Override configuration via CLI flags:
+
+```powershell
+python -m csv_combiner.cli --input-folder input --output-folder output --master-file master.csv
+```
+
+Running tests
+-------------
+
+```powershell
+pytest -q
+```
+
+Notes
+-----
+
+- This is an initial scaffold: core modules for streaming CSV I/O, basic transformations, and orchestration are implemented.
+- The implementation aims to preserve the original behavior: streaming reads, SourceFile tracking, filtering rows, and append-mode master updates.
+- Next steps: add more unit tests, CI workflow, and additional features (daily reports, summaries) as needed.
+- Write access to output folder
