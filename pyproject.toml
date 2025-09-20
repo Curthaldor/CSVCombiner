@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csv_combiner"
+version = "0.1.0"
+description = "Python port of CSVCombiner PowerShell scripts (streaming CSV merging with dedupe and reports)"
+authors = [ { name = "CSVCombiner Migration" } ]
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q"
+python_files = "test_*.py"
