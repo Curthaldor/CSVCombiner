@@ -23,68 +23,48 @@ A PowerShell script for efficiently merging multiple CSV files into a single mas
 ## Configuration
 
 The script uses `settings.ini` for configuration:
+# csv_combiner (Python port)
 
-```ini
-[Paths]
-InputFolder=.\input
-OutputFolder=.\output
+This repository contains an initial Python port of the CSVCombiner PowerShell scripts.
 
-[Output]
-MasterFileName=master.csv
+Quickstart
+---------
 
-[Execution]
-IntervalSeconds=0  # 0 = run once, >0 = repeat every N seconds
-```
+1. Create and activate a virtual environment (Windows PowerShell):
 
-## Usage Examples
-
-### Single Execution
 ```powershell
-# Use default settings
-.\csv-merger.ps1
-
-# Override master file name
-.\csv-merger.ps1 -MasterFileName "combined_data.csv"
-
-# Use custom settings file
-.\csv-merger.ps1 -SettingsFile ".\custom-settings.ini"
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
 ```
 
-### Continuous Execution
-Set `IntervalSeconds=30` in settings.ini to run every 30 seconds, or any desired interval.
+2. Install test dependencies and package in editable mode:
 
-## How It Works
+```powershell
+python -m pip install -e .[test]
+```
 
-### Smart Processing Logic
-1. **First Run**: If no output file exists, processes all input files and creates new master file
-2. **Filename Validation**: Only processes CSV files matching YYYYMMDDHHMMSS.csv format (e.g., 20250523200303.csv)
-3. **Subsequent Runs**: Checks the `SourceFile` column in existing output to identify already processed files
-4. **Incremental Updates**: Only processes new input files that haven't been merged yet
-5. **Data Filtering**: Filters out rows where both "Error Code" and "PassFlag" columns are empty
-6. **Append Mode**: New data is appended to existing master file, preserving previous results
+3. Run the CLI (uses `settings.ini` in repository root by default):
 
-This approach ensures efficiency and prevents duplicate data even in continuous execution mode.
+```powershell
+python -m csv_combiner.cli
+```
 
-- PowerShell 5.1 or later
-- Read access to input folder
+4. Override configuration via CLI flags:
+
+```powershell
+python -m csv_combiner.cli --input-folder input --output-folder output --master-file master.csv
+```
+
+Running tests
+-------------
+
+```powershell
+pytest -q
+```
+
+Notes
+-----
+
+- This is an initial scaffold: core modules for streaming CSV I/O, basic transformations, and orchestration are implemented.
+- The implementation aims to preserve the original behavior: streaming reads, SourceFile tracking, filtering rows, and append-mode master updates.
+- Next steps: add more unit tests, CI workflow, and additional features (daily reports, summaries) as needed.
 - Write access to output folder
-
-## Sample Data
-
-The `sampledata` folder contains example CSV files for testing the script functionality.
-
-## Output Format
-
-The merged CSV will have the following structure:
-- **SourceFile**: Name of the original CSV file (automatically added)
-- **[Original Columns]**: All columns from the input CSV files
-
-## Error Handling
-
-- **Configuration Errors**: Script exits immediately for invalid paths or missing settings
-- **Single Mode**: Script exits on file write conflicts or processing errors
-- **Continuous Mode**: Script logs errors and continues to next interval for file conflicts
-
-## Version
-
-Version 1.3-b - Minor update: normalize MAC addresses (remove `:` and `;` and whitespace), simplify daily-report deduplication to use `MAC Addr` only, and small bugfixes

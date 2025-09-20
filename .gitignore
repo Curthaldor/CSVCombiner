@@ -1,13 +1,15 @@
-# CSV data files
-*.csv
+# Ignore Python virtual environments and bytecode
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
 
-# Output directories and their contents
+# Output directories and their contents (keep these ignored)
 output/
-massdata/
 
-# Input data directories
-input/
-sampledata/
+# Leave data folders tracked in the repo; do not ignore CSVs or input/massdata
+# (remove broad CSV ignore to allow checking in sample/test data)
 
 # Temporary PowerShell files
 *.tmp
