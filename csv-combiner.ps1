@@ -270,10 +270,21 @@ function Invoke-CsvProcessing {
         if ($processedAny -or $true) {
             $setRes = Set-IniValue -FilePath $iniPath -Section 'Execution' -Key 'LastRun' -Value $maxTs
             if ($setRes.Success) {
-                Write-Host "  Updated INI LastRun to: $maxTs" -ForegroundColor Gray
-            } else {
-                Write-Host "  Warning: failed to update INI LastRun: $($setRes.Message)" -ForegroundColor Yellow
-            }
+                    # Persist the new LastRun into the in-memory settings so subsequent cycles honor it
+                    try {
+                        if ($Settings -and $Settings.ContainsKey('Execution.LastRun')) {
+                            $Settings['Execution.LastRun'] = $maxTs
+                        } else {
+                            $Settings.Add('Execution.LastRun', $maxTs)
+                        }
+                    } catch {
+                        # Non-fatal - just log
+                        Write-Host "  Warning: could not update in-memory LastRun: $($_.Exception.Message)" -ForegroundColor Yellow
+                    }
+                    Write-Host "  Updated INI LastRun to: $maxTs" -ForegroundColor Gray
+                } else {
+                    Write-Host "  Warning: failed to update INI LastRun: $($setRes.Message)" -ForegroundColor Yellow
+                }
         }
     } catch {
         Write-Host "  Warning: unable to persist LastRun to INI: $($_.Exception.Message)" -ForegroundColor Yellow
