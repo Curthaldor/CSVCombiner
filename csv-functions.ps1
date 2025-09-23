@@ -62,19 +62,29 @@ function Read-CsvData {
                 $headers = @()
                 $headerCounts = @{}
                 
+                # Build headers for creating objects, handling duplicates and empty header names
+                $headers = @()
+                $headerCounts = @{}
+                $colIndex = 1
                 foreach ($column in $columns) {
                     $cleanHeader = $column.Trim()
-                    
-                    # Handle duplicate column names by adding a suffix
+
+                    # If header is empty, generate a fallback name like Column1, Column2, ...
+                    if ([string]::IsNullOrWhiteSpace($cleanHeader)) {
+                        $cleanHeader = "Column$colIndex"
+                    }
+
+                    # Handle duplicate column names by adding a numeric suffix
                     if ($headerCounts.ContainsKey($cleanHeader)) {
                         $headerCounts[$cleanHeader]++
-                        $uniqueHeader = "$cleanHeader$($headerCounts[$cleanHeader])"
+                        $uniqueHeader = "${cleanHeader}$($headerCounts[$cleanHeader])"
                     } else {
                         $headerCounts[$cleanHeader] = 0
                         $uniqueHeader = $cleanHeader
                     }
-                    
+
                     $headers += $uniqueHeader
+                    $colIndex++
                 }
                 
                 $isFirstLine = $false
