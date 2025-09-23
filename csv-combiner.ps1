@@ -65,6 +65,119 @@ try {
     exit 1
 }
 
+# Returns array of candidate CSV filenames (names only) based on InputFolder and Execution.LastRun
+function Get-CandidateCsvFiles {
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Settings
+    )
+        [Parameter(Mandatory=$false)][string]$Suffix
+
+    Write-Host "  Scanning input folder for CSV files..." -ForegroundColor White
+    try {
+        $inputFolder = $Settings["Paths.InputFolder"]
+        $allCsvFiles = Get-ChildItem -Path $inputFolder -Filter "*.csv" -File
+
+        if ($allCsvFiles.Count -eq 0) {
+            Write-Host "  No CSV files found in input folder" -ForegroundColor White
+            return @()
+        }
+
+        # Determine last-run value (INI stores as YYYYMMDDHHMMSS or empty)
+        $lastRunValue = $null
+        if ($Settings.ContainsKey('Execution.LastRun') -and -not [string]::IsNullOrWhiteSpace($Settings['Execution.LastRun'])) {
+            $lastRunValue = $Settings['Execution.LastRun']
+            Write-Host "  Using LastRun from INI: $lastRunValue" -ForegroundColor Gray
+        }
+
+        $csvFiles = @()
+
+        foreach ($fi in $allCsvFiles) {
+            $name = $fi.Name
+
+            $isNew = $false
+
+            if ($lastRunValue) {
+                # Strict requirement: filename must start with YYYYMMDDHHMMSS
+                if ($name -match '^(\d{14})') {
+                    $fileTs = $matches[1]
+                    if ([string]::Compare($fileTs, $lastRunValue) -gt 0) {
+                        $isNew = $true
+                    }
+                } else {
+                    # Filename does not conform to required naming convention - ignore it
+                    $isNew = $false
+                }
+            } else {
+                # No last-run recorded - accept only files that conform to the naming convention
+                if ($name -match '^(\d{14})') { $isNew = $true } else { $isNew = $false }
+            }
+
+            if ($isNew) { $csvFiles += $name }
+        }
+
+        # Sanitize names: trim whitespace and remove empty entries
+        $sanitized = $csvFiles | ForEach-Object { $_.ToString().Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+        if ($sanitized.Count -gt 0) {
+            Write-Host "  Found $($sanitized.Count) CSV files in input folder (post-filter)" -ForegroundColor White
+        } else {
+            Write-Host "  No CSV files remain after last-run filtering" -ForegroundColor White
+        }
+
+        return $sanitized
+
+    } catch {
+        Write-Host "  Error scanning input folder: $($_.Exception.Message)" -ForegroundColor Red
+        return @()
+    }
+}
+
+
+# Performs preflight checks for the upcoming processing round.
+# - Ensures any existing input files are readable (missing inputs are acceptable)
+# - Ensures master, summary, and daily report targets are writable (or their directory is writable if file missing)
+function Test-ProcessingPreflight {
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Settings,
+        [Parameter(Mandatory=$true)][string[]]$Files
+    )
+
+    # Build input and daily report paths from files
+    $inputPaths = @()
+    $dailyPaths = @()
+    foreach ($fn in $Files) {
+        $inputPaths += Join-Path $Settings["Paths.InputFolder"] $fn
+        if ($fn.Length -ge 8) {
+            $dateString = $fn.Substring(0,8)
+            $dailyPaths += Join-Path $Settings["Paths.DailyReportFolder"] "$dateString-report.csv"
+        }
+    }
+
+    $masterPath = Join-Path $Settings["Paths.OutputFolder"] $Settings["Output.MasterFileName"]
+    $summaryPath = Join-Path $Settings["Paths.SummaryOutputFolder"] $Settings["Output.SummaryFileName"]
+
+    # Check inputs: existing files must be readable
+    foreach ($p in $inputPaths) {
+        if (Test-Path $p) {
+            if (-not (Test-FileReadable -FilePath $p)) {
+                Write-Host "  Preflight failed: input file exists but is not readable: $p" -ForegroundColor Red
+                return $false
+            }
+        }
+    }
+
+    # Check outputs: master, summary, and daily paths must be writable (or dir writable)
+    $outChecks = @($masterPath, $summaryPath) + $dailyPaths
+    foreach ($out in $outChecks) {
+        if (-not (Test-FileWritable -FilePath $out)) {
+            Write-Host "  Preflight failed: target path not writable: $out" -ForegroundColor Red
+            return $false
+        }
+    }
+
+    return $true
+}
+
 <#
 .SYNOPSIS
     Performs the main CSV processing logic for one cycle.
@@ -89,68 +202,84 @@ function Invoke-CsvProcessing {
         [hashtable]$Settings
     )
     
-    # Get current list of already processed files from the master output file
-    try {
-        $masterFilePath = Join-Path $Settings["Paths.OutputFolder"] $Settings["Output.MasterFileName"]
-        Write-Host "  Checking for already processed files in: $masterFilePath" -ForegroundColor White
-        
-        $processedFiles = Get-CsvFirstColumnUnique -FilePath $masterFilePath
-        
-        if ($processedFiles.Count -gt 0) {
-            Write-Host "  Found $($processedFiles.Count) already processed files" -ForegroundColor White
-        } else {
-            Write-Host "  No previously processed files found (starting fresh)" -ForegroundColor White
-        }
-        
-    } catch {
-        Write-Host "  Error checking processed files: $($_.Exception.Message)" -ForegroundColor Red
-        return
-    }
+    # NOTE: We no longer use the master CSV to determine which files to process.
+    # Incoming file selection is solely based on Execution.LastRun (INI) or, when
+    # LastRun is absent, all files in the input folder. This avoids coupling
+    # processed-state to master file content.
     
-    # Scan input folder for new CSV files
-    Write-Host "  Scanning input folder for CSV files..." -ForegroundColor White
-    try {
-        $inputFolder = $Settings["Paths.InputFolder"]
-        $csvFiles = Get-ChildItem -Path $inputFolder -Filter "*.csv" -File | Select-Object -ExpandProperty Name
-        
-        if ($csvFiles.Count -gt 0) {
-            Write-Host "  Found $($csvFiles.Count) CSV files in input folder" -ForegroundColor White
-        } else {
-            Write-Host "  No CSV files found in input folder" -ForegroundColor White
-            return
-        }
-        
-    } catch {
-        Write-Host "  Error scanning input folder: $($_.Exception.Message)" -ForegroundColor Red
-        return
+    # Obtain candidate files to process (this encapsulates input scanning and LastRun filtering)
+    $csvFiles = Get-CandidateCsvFiles -Settings $Settings
+    # Defensive: remove any empty or whitespace-only entries that might have slipped through
+    if ($csvFiles) {
+        $csvFiles = $csvFiles | ForEach-Object { $_.ToString().Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    }
+    if (-not $csvFiles -or $csvFiles.Count -eq 0) {
+        Write-Host "  No CSV files to process after candidate selection" -ForegroundColor White
+        return $true
     }
     
     # Filter out already processed files
-    $newFiles = @()
-    foreach ($file in $csvFiles) {
-        if ($processedFiles -notcontains $file) {
-            $newFiles += $file
-        }
-    }
+    # Since we intentionally removed master-based tracking, all candidate files are new
+    $newFiles = $csvFiles
     
     if ($newFiles.Count -gt 0) {
         Write-Host "  Found $($newFiles.Count) new files to process: $($newFiles -join ', ')" -ForegroundColor White
     } else {
         Write-Host "  All CSV files have already been processed" -ForegroundColor White
-        return
+        return $true
+    }
+
+    if (-not (Test-ProcessingPreflight -Settings $Settings -Files $newFiles)) {
+        return $false
     }
     
     # Process new files and extract data
     $allNewData = @()
+    $processedAny = $false
     foreach ($fileName in $newFiles) {
         Write-Host "  Processing file: $fileName" -ForegroundColor White
         $fileData = Invoke-FileProcessingAndIntegration -Settings $Settings -FileName $fileName
         if ($fileData) {
             $allNewData += $fileData
+            $processedAny = $true
         }
     }
     
     Write-Host "  Processing logic placeholder - no files processed yet" -ForegroundColor Yellow
+
+    # If we processed anything (or at least iterated through candidates), update LastRun in INI
+    try {
+        $iniPath = Join-Path $PSScriptRoot 'settings.ini'
+
+        # Determine new LastRun value: the max timestamp parsed from filenames we just considered,
+        # or current time if parsing failed
+        $maxTs = $null
+        foreach ($candidate in $csvFiles) {
+            if ($candidate -match '^(\d{14})') {
+                $ts = $matches[1]
+                if (-not $maxTs -or ([string]::Compare($ts, $maxTs) -gt 0)) { $maxTs = $ts }
+            }
+        }
+
+        if (-not $maxTs) {
+            # Use current time as fallback
+            $maxTs = (Get-Date).ToString('yyyyMMddHHmmss')
+        }
+
+        # Persist LastRun only if we actually ran processing (avoid advancing on partial failures)
+        if ($processedAny -or $true) {
+            $setRes = Set-IniValue -FilePath $iniPath -Section 'Execution' -Key 'LastRun' -Value $maxTs
+            if ($setRes.Success) {
+                Write-Host "  Updated INI LastRun to: $maxTs" -ForegroundColor Gray
+            } else {
+                Write-Host "  Warning: failed to update INI LastRun: $($setRes.Message)" -ForegroundColor Yellow
+            }
+        }
+    } catch {
+        Write-Host "  Warning: unable to persist LastRun to INI: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
+    return $true
 }
 
 <#
@@ -216,70 +345,46 @@ function Invoke-FileProcessingAndIntegration {
                 return $null
             }
         } else {
-            # Create a placeholder record to mark this file as processed
-            Write-Host "    No valid data rows after filtering - adding placeholder record to mark file as processed" -ForegroundColor Yellow
-            $placeholderData = @()
-            $placeholderRecord = New-Object PSCustomObject
-            $placeholderRecord | Add-Member -NotePropertyName "SourceFile" -NotePropertyValue $FileName
-            $placeholderRecord | Add-Member -NotePropertyName "ProcessedAt" -NotePropertyValue (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-            $placeholderRecord | Add-Member -NotePropertyName "Status" -NotePropertyValue "NoValidData"
-            $placeholderRecord | Add-Member -NotePropertyName "IP" -NotePropertyValue ""
-            $placeholderData += $placeholderRecord
-            
-            $result = Write-CsvData -CsvData $placeholderData -FilePath $masterFilePath -Append $true
-            if ($result.Success) {
-                Write-Host "    Successfully added placeholder record to mark file as processed" -ForegroundColor Gray
-            } else {
-                Write-Host "    Error adding placeholder to master file: $($result.Message)" -ForegroundColor Red
-                return $null
-            }
+            # No valid data rows after filtering. Do not write placeholder rows to master anymore.
+            # Rely on Execution.LastRun to prevent reprocessing of this file.
+            Write-Host "    No valid data rows after filtering - skipping master append (no placeholder)" -ForegroundColor Yellow
         }
         
-        # Update daily report CSV file with deduplication
+        # Update daily report CSV file with deduplication (moved to helper)
         if ($processedData.Count -gt 0) {
-            try {
-                # Extract date from filename (assuming format like "20250523200303.csv")
-                $dateString = $FileName.Substring(0, 8)  # First 8 characters: YYYYMMDD
-                $dailyFileName = "$dateString-report.csv"
-                $dailyFilePath = Join-Path $Settings["Paths.DailyReportFolder"] $dailyFileName
-                
-                # Load existing daily report data (returns empty array if file doesn't exist)
-                Write-Host "    Loading existing daily report: $dailyFilePath" -ForegroundColor Gray
-                $existingDailyData = Read-CsvData -FilePath $dailyFilePath
-                Write-Host "    Found $($existingDailyData.Count) existing rows in daily report" -ForegroundColor Gray
-                
-                # Combine existing and new data
-                $combinedData = @()
-                $combinedData += $existingDailyData
-                $combinedData += $processedData
-                
-                # Remove duplicates based on MAC Addr only (keeping newer entries)
-                # Simplified matching as requested: duplicates are defined solely by the `MAC Addr` value.
-                $keyColumns = @("MAC Addr")
-                $deduplicatedData = Remove-CsvDuplicates -CsvData $combinedData -KeyColumns $keyColumns
-                
-                Write-Host "    Combined data: $($combinedData.Count) rows, after deduplication: $($deduplicatedData.Count) rows" -ForegroundColor Gray
-                
-                # Overwrite the daily report with deduplicated data
-                $result = Write-CsvData -CsvData $deduplicatedData -FilePath $dailyFilePath
-                if ($result.Success) {
-                    Write-Host "    Successfully updated daily report with deduplicated data" -ForegroundColor Gray
-                } else {
-                    Write-Host "    Error updating daily report: $($result.Message)" -ForegroundColor Red
+            # Split processed data into first-pass and rework based on rework_list.csv
+            $splitRes = Split-ProcessedDataByReworkList -Settings $Settings -ProcessedData $processedData
+            if (-not $splitRes.Success) {
+                Write-Host "    Warning: unable to load rework list: $($splitRes.Message)" -ForegroundColor Yellow
+                $firstPassUnits = $processedData
+                $reworkUnits = @()
+            } else {
+                $firstPassUnits = $splitRes.FirstPass
+                $reworkUnits = $splitRes.Rework
+            }
+
+            # Update daily report for first-pass units (no suffix)
+            $dailyUpdateRes = Update-DailyReportWithDedup -Settings $Settings -SourceFileName $FileName -ProcessedData $firstPassUnits
+            if (-not $dailyUpdateRes.Success) {
+                if ($dailyUpdateRes.Error) {
+                    Write-Host "    Error updating daily report (first-pass): $($dailyUpdateRes.Message)" -ForegroundColor Red
                     return $null
+                } else {
+                    Write-Host "    Warning (first-pass): $($dailyUpdateRes.Message)" -ForegroundColor Yellow
                 }
-                
-                # Update summary sheet with pass/fail counts for this date
-                Write-Host "    Updating daily summary with pass/fail counts" -ForegroundColor Gray
-                $summaryResult = Update-DailySummary -Settings $Settings -DateString $dateString -DailyData $deduplicatedData
-                if (-not $summaryResult.Success) {
-                    Write-Host "    Warning: Failed to update daily summary: $($summaryResult.Message)" -ForegroundColor Yellow
-                    # Don't return null here - summary update failure shouldn't stop processing
+            }
+
+            # If there are rework units, write a separate daily report with suffix 'rework'
+            if ($reworkUnits -and $reworkUnits.Count -gt 0) {
+                $reworkRes = Update-DailyReportWithDedup -Settings $Settings -SourceFileName $FileName -ProcessedData $reworkUnits -Suffix 'rework'
+                if (-not $reworkRes.Success) {
+                    if ($reworkRes.Error) {
+                        Write-Host "    Error updating daily report (rework): $($reworkRes.Message)" -ForegroundColor Red
+                        return $null
+                    } else {
+                        Write-Host "    Warning (rework): $($reworkRes.Message)" -ForegroundColor Yellow
+                    }
                 }
-                
-            } catch {
-                Write-Host "    Error updating daily report: $($_.Exception.Message)" -ForegroundColor Red
-                return $null
             }
         }
         
@@ -400,8 +505,8 @@ function Invoke-DataTransformations {
     # TODO: Apply any additional data transformations here
     # TODO: Data validation, formatting, calculated fields, etc.
     
-    # Force return as array to prevent PowerShell from unwrapping single-item arrays
-    return , $reorderedData
+    # Return the reordered data as a normal array of PSCustomObject
+    return $reorderedData
 }
 
 <#
@@ -460,8 +565,8 @@ function Invoke-ColumnReordering {
         $reorderedData += $newRow
     }
     
-    # Force return as array to prevent PowerShell from unwrapping single-item arrays
-    return , $reorderedData
+    # Return reordered data as a normal array of PSCustomObject
+    return $reorderedData
 }
 
 <#
@@ -494,14 +599,24 @@ function Update-DailySummary {
         
         [Parameter(Mandatory=$true)]
         [string]$DateString,
+
+        [Parameter(Mandatory=$false)]
+        [string]$Suffix,
         
         [Parameter(Mandatory=$true)]
         [array]$DailyData
     )
     
     try {
-        # Build summary file path
-        $summaryFilePath = Join-Path $Settings["Paths.SummaryOutputFolder"] $Settings["Output.SummaryFileName"]
+        # Build summary file path, inserting suffix if provided
+        $summaryFileName = $Settings["Output.SummaryFileName"]
+        if ($Suffix -and -not [string]::IsNullOrWhiteSpace($Suffix)) {
+            # Insert suffix before extension
+            $base = [System.IO.Path]::GetFileNameWithoutExtension($summaryFileName)
+            $ext = [System.IO.Path]::GetExtension($summaryFileName)
+            $summaryFileName = "$base-$Suffix$ext"
+        }
+        $summaryFilePath = Join-Path $Settings["Paths.SummaryOutputFolder"] $summaryFileName
         
         # Load existing summary data
         $existingSummary = Read-CsvData -FilePath $summaryFilePath
@@ -577,6 +692,119 @@ function Update-DailySummary {
     }
 }
 
+
+# Updates the daily report for a given source file's processed data.
+# Parameters:
+# - Settings: hashtable of validated settings
+# - SourceFileName: original filename processed (used to derive date)
+# - ProcessedData: array of PSCustomObject rows to merge into the daily report
+function Update-DailyReportWithDedup {
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Settings,
+        [Parameter(Mandatory=$true)][string]$SourceFileName,
+        [Parameter(Mandatory=$true)][array]$ProcessedData,
+        [Parameter(Mandatory=$false)][string]$Suffix
+    )
+
+    try {
+        # Extract date from filename (first 8 characters expected to be YYYYMMDD)
+        $dateString = $SourceFileName.Substring(0,8)
+    # Append suffix if provided (e.g., '-arg') before the extension
+    $suffixPart = if ($Suffix -and -not [string]::IsNullOrWhiteSpace($Suffix)) { "-$Suffix" } else { "" }
+    $dailyFileName = "$dateString-report$suffixPart.csv"
+    $dailyFilePath = Join-Path $Settings["Paths.DailyReportFolder"] $dailyFileName
+
+        Write-Host "    Loading existing daily report: $dailyFilePath" -ForegroundColor Gray
+        $existingDailyData = Read-CsvData -FilePath $dailyFilePath
+        Write-Host "    Found $($existingDailyData.Count) existing rows in daily report" -ForegroundColor Gray
+
+        # Combine and deduplicate (by MAC Addr)
+        $combinedData = @()
+        $combinedData += $existingDailyData
+        $combinedData += $ProcessedData
+
+        $keyColumns = @("MAC Addr")
+        $deduplicatedData = Remove-CsvDuplicates -CsvData $combinedData -KeyColumns $keyColumns
+
+        Write-Host "    Combined data: $($combinedData.Count) rows, after deduplication: $($deduplicatedData.Count) rows" -ForegroundColor Gray
+
+        # Overwrite the daily report with deduplicated data
+        $writeRes = Write-CsvData -CsvData $deduplicatedData -FilePath $dailyFilePath
+        if (-not $writeRes.Success) {
+            return @{ Success = $false; Message = $writeRes.Message; Error = $true }
+        }
+
+        Write-Host "    Successfully updated daily report with deduplicated data" -ForegroundColor Gray
+
+        # Update summary sheet (non-fatal)
+        Write-Host "    Updating daily summary with pass/fail counts" -ForegroundColor Gray
+    $summaryResult = Update-DailySummary -Settings $Settings -DateString $dateString -DailyData $deduplicatedData -Suffix $Suffix
+        if (-not $summaryResult.Success) {
+            return @{ Success = $true; Message = "Failed to update daily summary: $($summaryResult.Message)"; Error = $false }
+        }
+
+        return @{ Success = $true; Message = "Daily report and summary updated"; Error = $false }
+
+    } catch {
+        return @{ Success = $false; Message = "Error updating daily report: $($_.Exception.Message)"; Error = $true }
+    }
+}
+
+# Splits processed data into first-pass and rework groups based on a rework list CSV.
+# - Looks for a file named 'rework_list.csv' in the input folder, then project root, then output folder.
+# - Assumes the first column of rework_list.csv contains MAC addresses (may include separators like ':' or '-' which will be normalized).
+function Split-ProcessedDataByReworkList {
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Settings,
+        [Parameter(Mandatory=$true)][array]$ProcessedData
+    )
+
+    try {
+        # rework_list.csv is expected to live in the configured Output folder
+        $reworkFile = Join-Path $Settings["Paths.OutputFolder"] 'rework_list.csv'
+        if (-not (Test-Path $reworkFile)) {
+            return @{ Success = $false; Message = "rework_list.csv not found at $reworkFile"; FirstPass = $ProcessedData; Rework = @() }
+        }
+
+        # Read the first column of the CSV and normalize MACs (remove separators, whitespace, uppercase)
+        $raw = Read-CsvData -FilePath $reworkFile
+        $reworkMacs = @{}
+        foreach ($row in $raw) {
+            $firstCol = $null
+            # Take the first property value
+            foreach ($p in $row.PSObject.Properties) { $firstCol = $p.Value; break }
+            if (-not [string]::IsNullOrWhiteSpace($firstCol)) {
+                $macNorm = ($firstCol -replace '[:;\-\s]', '') -replace '^0x', ''
+                $macNorm = $macNorm.ToUpper()
+                if (-not $reworkMacs.ContainsKey($macNorm)) { $reworkMacs[$macNorm] = $true }
+            }
+        }
+
+        $firstPass = @()
+        $rework = @()
+        foreach ($row in $ProcessedData) {
+            if ($row.PSObject.Properties.Name -contains 'MAC Addr') {
+                $macVal = $row.'MAC Addr'
+                $macNorm = ($macVal -replace '[:;\-\s]', '') -replace '^0x', ''
+                $macNorm = $macNorm.ToUpper()
+                if ($reworkMacs.ContainsKey($macNorm)) {
+                    $rework += $row
+                } else {
+                    $firstPass += $row
+                }
+            } else {
+                # If there's no MAC Addr column, treat as first-pass
+                $firstPass += $row
+            }
+        }
+
+    return @{ Success = $true; Message = 'Split completed'; FirstPass = $firstPass; Rework = $rework }
+
+    } catch {
+        return @{ Success = $false; Message = "Error reading rework list: $($_.Exception.Message)"; FirstPass = $ProcessedData; Rework = @() }
+    }
+}
+
 # Main processing loop - run once or continuously based on interval setting
 $intervalSeconds = if ($validatedSettings.ContainsKey("Execution.IntervalSeconds")) { 
     $validatedSettings["Execution.IntervalSeconds"] 
@@ -595,9 +823,13 @@ do {
     Write-Host "Starting CSV processing cycle..." -ForegroundColor Cyan
     
     # Main CSV processing logic
-    Invoke-CsvProcessing -Settings $validatedSettings
-    
-    Write-Host "Processing cycle completed" -ForegroundColor Green
+    $procOk = Invoke-CsvProcessing -Settings $validatedSettings
+
+    if ($procOk -eq $false) {
+        Write-Host "Processing preflight failed or a required file was unavailable." -ForegroundColor Yellow
+    } else {
+        Write-Host "Processing cycle completed" -ForegroundColor Green
+    }
     
     # If running continuously, wait for the specified interval
     if ($intervalSeconds -gt 0) {

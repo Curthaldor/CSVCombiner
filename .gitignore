@@ -26,5 +26,8 @@ Thumbs.db
 *.backup
 *~
 
+# Ignore scripts folder (helper/maintenance scripts not part of release)
+scripts/
+
 # Ignore log files
 *.log

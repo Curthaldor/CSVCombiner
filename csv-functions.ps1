@@ -593,6 +593,8 @@ function Test-IniSettings {
         # Store as integer for convenience
         $result["Execution.IntervalSeconds"] = $intervalInt
     }
+
+    # Leave Execution.LastRun as-is (string) if present; consumer will parse as needed
     
     # Validate required settings are present and not empty
     $requiredSettings = @(
@@ -608,6 +610,182 @@ function Test-IniSettings {
     }
     
     return $result
+}
+
+
+<#
+.SYNOPSIS
+    Updates a single key=value in the INI file.
+
+.DESCRIPTION
+    Writes a single section.key value back into the given INI file by replacing or appending
+    the key line. This is a minimal helper used to persist Execution.LastRun after a run.
+
+.PARAMETER FilePath
+    The INI file path.
+
+.PARAMETER Section
+    The INI section name (e.g., 'Execution').
+
+.PARAMETER Key
+    The key name within the section (e.g., 'LastRun').
+
+.PARAMETER Value
+    The value to write (string). If empty, the key will be set to an empty value.
+#>
+function Set-IniValue {
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [Parameter(Mandatory=$true)][string]$Section,
+        [Parameter(Mandatory=$true)][string]$Key,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+
+    if (-not (Test-Path $FilePath)) {
+        throw "INI file not found: $FilePath"
+    }
+
+    $lines = Get-Content $FilePath -Raw -ErrorAction Stop -Encoding UTF8 -Force -ErrorVariable ev
+    $patternSection = "(?ms)^\[" + [regex]::Escape($Section) + "\].*?(?=^\[|\z)"
+    $sectionMatch = [regex]::Match($lines, $patternSection)
+
+    if ($sectionMatch.Success) {
+        $sectionText = $sectionMatch.Value
+
+        # Build replacement for key line
+    $escapedKey = [regex]::Escape($Key)
+    # Use single-quoted pieces so PowerShell doesn't try to evaluate $(...) inside the regex
+    $keyPattern = '(?m)^(\s*' + $escapedKey + '\s*=).*$(\r?\n)?'
+
+        if ([regex]::IsMatch($sectionText, $keyPattern)) {
+            # Replace existing key line within section
+            $newKeyLine = "$Key=$Value`r`n"
+            $newSectionText = [regex]::Replace($sectionText, $keyPattern, $newKeyLine)
+            $newLines = $lines.Substring(0, $sectionMatch.Index) + $newSectionText + $lines.Substring($sectionMatch.Index + $sectionMatch.Length)
+        } else {
+            # Append key at end of section
+            $newSectionText = $sectionText.TrimEnd("`r","`n") + "`r`n$Key=$Value`r`n"
+            $newLines = $lines.Substring(0, $sectionMatch.Index) + $newSectionText + $lines.Substring($sectionMatch.Index + $sectionMatch.Length)
+        }
+    } else {
+        # Section not found - append at end
+        $newLines = $lines.TrimEnd("`r","`n") + "`r`n[$Section]`r`n$Key=$Value`r`n"
+    }
+
+    try {
+        Set-Content -Path $FilePath -Value $newLines -Encoding UTF8 -Force
+        return @{ Success = $true }
+    } catch {
+        return @{ Success = $false; Message = $_.Exception.Message }
+    }
+}
+
+
+<#
+.SYNOPSIS
+    Checks whether a file can be opened for reading.
+
+.DESCRIPTION
+    Attempts to open the specified file for read access. Returns $true if the file
+    can be opened for read (allowing other processes to have the file open for read/write),
+    otherwise returns $false. This helper never throws on expected conditions.
+
+.PARAMETER FilePath
+    Full path to the file to test.
+
+.OUTPUTS
+    Boolean: $true if readable, $false otherwise.
+
+.EXAMPLE
+    if (Test-FileReadable -FilePath "C:\data\sample.csv") { Write-Host "OK" }
+#>
+function Test-FileReadable {
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath
+    )
+
+    try {
+        if (-not (Test-Path $FilePath)) {
+            # File must exist to be readable
+            Write-Verbose "Test-FileReadable: file not found: $FilePath"
+            return $false
+        }
+
+        # Try opening the file for read while allowing other processes to read/write
+        $fs = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        if ($fs) { $fs.Close(); $fs.Dispose() }
+        return $true
+    }
+    catch {
+        Write-Verbose "Test-FileReadable: cannot open file for read: $FilePath - $($_.Exception.Message)"
+        return $false
+    }
+}
+
+
+<#
+.SYNOPSIS
+    Checks whether a file path is writable (either existing file or directory for new files).
+
+.DESCRIPTION
+    Determines if the current process can write to the given file path. If the file
+    exists, the function will attempt to open it for exclusive write access. If the file
+    does not exist, the function will attempt to create and delete a zero-byte temporary
+    file in the target directory to verify directory writability. Returns $true on success,
+    $false otherwise. Does not throw on expected conditions.
+
+.PARAMETER FilePath
+    Full path to the file to test for writability.
+
+.OUTPUTS
+    Boolean: $true if writable, $false otherwise.
+
+.EXAMPLE
+    if (Test-FileWritable -FilePath "C:\output\master.csv") { Write-Host "Writable" }
+#>
+function Test-FileWritable {
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath
+    )
+
+    try {
+        $dir = [System.IO.Path]::GetDirectoryName($FilePath)
+        if ([string]::IsNullOrEmpty($dir)) { $dir = Get-Location }
+
+        # Ensure directory exists
+        if (-not (Test-Path $dir)) {
+            Write-Verbose "Test-FileWritable: directory does not exist: $dir"
+            return $false
+        }
+
+        if (Test-Path $FilePath) {
+            # If file exists, attempt to open for exclusive write
+            try {
+                $fs = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                if ($fs) { $fs.Close(); $fs.Dispose() }
+                return $true
+            } catch {
+                Write-Verbose "Test-FileWritable: cannot open existing file for write: $FilePath - $($_.Exception.Message)"
+                return $false
+            }
+        } else {
+            # File does not exist — attempt to create and delete a temporary file in the directory
+            $tempName = [System.IO.Path]::Combine($dir, ([System.IO.Path]::GetRandomFileName()))
+            try {
+                $fs = [System.IO.File]::Open($tempName, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                if ($fs) { $fs.Close(); $fs.Dispose() }
+                Remove-Item -Path $tempName -ErrorAction SilentlyContinue
+                return $true
+            } catch {
+                Write-Verbose "Test-FileWritable: cannot create temp file in directory: $dir - $($_.Exception.Message)"
+                return $false
+            }
+        }
+    }
+    catch {
+        Write-Verbose "Test-FileWritable: unexpected error testing path: $FilePath - $($_.Exception.Message)"
+        return $false
+    }
 }
 
 <#
